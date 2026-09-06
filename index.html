@@ -401,11 +401,11 @@
         ほぼ同じ位置にいる。
       </div>
       <div class="bar-track">
-        <div class="bar-fill" style="width: 96%;"></div>
-        <div class="bar-marker" style="left: 90%; background:#5DCAA5;"></div>
-        <div class="bar-marker-label top-label" style="left: 90%; color:#5DCAA5; transform: translateX(-70%);">理想<br>4:30</div>
-        <div class="bar-marker" style="left: 94%;"></div>
-        <div class="bar-marker-label bottom-label" style="left: 94%; transform: translateX(-30%);">必達<br>4:42</div>
+        <div class="bar-fill" style="width: 53%;"></div>
+        <div class="bar-marker" style="left: 53%;"></div>
+        <div class="bar-marker-label top-label" style="left: 53%; transform: translateX(-70%);">必達<br>4:42</div>
+        <div class="bar-marker" style="left: 67%; background:#5DCAA5;"></div>
+        <div class="bar-marker-label bottom-label" style="left: 67%; color:#5DCAA5; transform: translateX(-30%);">理想<br>4:30</div>
       </div>
       <div class="bar-labels" style="margin-top: 28px;"><span>5:30/km</span><span>4:00/km</span></div>
     </div>
@@ -413,7 +413,7 @@
 
   <section>
     <div class="section-title">直近10回のペース記録</div>
-    <div class="runs-list" id="runs"></div>
+    <div class="runs-list" id="runs"><div class="cond-empty">Stravaからデータを取得中...</div></div>
   </section>
 
   <section>
@@ -501,24 +501,106 @@
   const diffDays = Math.max(0, Math.ceil((raceDate - today) / (1000*60*60*24)));
   document.getElementById('days').textContent = diffDays;
 
-  // 直近の実データ(Stravaより取得済み)
-  const runs = [
-    { date: '9/4',  dist: '12.01km', paceSec: 296, mustSec: 282 },
-    { date: '9/2',  dist: '5.01km',  paceSec: 253, mustSec: 282 },
-    { date: '8/29', dist: '14.00km', paceSec: 295, mustSec: 282 },
-    { date: '8/27', dist: '6.02km',  paceSec: 270, mustSec: 282 },
-    { date: '8/23', dist: '8.48km',  paceSec: 307, mustSec: 282 },
-    { date: '8/18', dist: '5.01km',  paceSec: 275, mustSec: 282 },
-    { date: '8/16', dist: '10.01km', paceSec: 349, mustSec: 282 },
-    { date: '8/15', dist: '7.01km',  paceSec: 267, mustSec: 282 },
-    { date: '8/11', dist: '15.01km', paceSec: 325, mustSec: 282 },
-    { date: '8/9',  dist: '8.45km',  paceSec: 305, mustSec: 282 },
-  ];
+  // ===== Strava連携設定 =====
+  const STRAVA_CLIENT_ID = '275062';
+  const STRAVA_CLIENT_SECRET = '831318a81f69f8717b0d1fb4cc8c72875ef0c1ed';
+  const STRAVA_REFRESH_TOKEN = '060e3da7fcfeb1c668bd57a25895419329e9f4de';
+  const MUST_PACE_SEC = 282; // 1:39ハーフの必達ペース(秒/km)
+  const DREAM_PACE_SEC = 270; // 1:35理想ペース(秒/km)
 
   function fmtPace(sec) {
     const m = Math.floor(sec / 60);
     const s = String(Math.round(sec % 60)).padStart(2, '0');
-    return `${m}:${s}/km`;
+    return `${m}:${s}`;
+  }
+
+  function renderRuns(runs) {
+    const list = document.getElementById('runs');
+    list.innerHTML = '';
+    runs.forEach(r => {
+      const row = document.createElement('div');
+      row.className = 'run-row';
+      const cls = r.paceSec <= MUST_PACE_SEC ? 'under' : 'over';
+      row.innerHTML = `
+        <div class="run-date">${r.date}</div>
+        <div class="run-dist">${r.dist}</div>
+        <div class="run-pace ${cls}">${fmtPace(r.paceSec)}/km</div>
+      `;
+      list.appendChild(row);
+    });
+  }
+
+  function updateInsights(runs) {
+    // 直近6回(距離1km以上)の平均ペース
+    const recent = runs.slice(0, 6);
+    const avgSec = recent.reduce((s, r) => s + r.paceSec, 0) / recent.length;
+    const headline = document.querySelector('.pace-compare .headline');
+    if (headline) {
+      headline.innerHTML = `直近${recent.length}回の平均ペースは<br><span class="num">${fmtPace(avgSec)}/km</span> ── 必達ペース(${fmtPace(MUST_PACE_SEC)}/km)と<br>${avgSec <= MUST_PACE_SEC ? '目標に到達している。' : 'の差を詰めている段階。'}`;
+    }
+    // バーの幅・マーカー位置を実際のペーススケール(5:30/km=330秒〜4:00/km=240秒)で計算
+    const range = [330, 240];
+    const pct = v => Math.max(0, Math.min(100, ((range[0] - v) / (range[0] - range[1])) * 100));
+    const fill = document.querySelector('.bar-fill');
+    if (fill) fill.style.width = pct(avgSec) + '%';
+    document.querySelectorAll('.bar-marker')[0].style.left = pct(MUST_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker-label')[0].style.left = pct(MUST_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker')[1].style.left = pct(DREAM_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker-label')[1].style.left = pct(DREAM_PACE_SEC) + '%';
+
+    // 最長距離を検出して「距離耐性」カードを更新
+    const longest = Math.max(...runs.map(r => parseFloat(r.dist)));
+    const distPillarNote = document.querySelectorAll('.pillar .note')[0];
+    if (distPillarNote) {
+      const gap = (21.1 - longest).toFixed(1);
+      distPillarNote.textContent = `最長${longest}km、本番まで+${gap}km分足りない`;
+    }
+    // ペース出力カードも更新
+    const pacePillarNote = document.querySelectorAll('.pillar .note')[1];
+    if (pacePillarNote) {
+      pacePillarNote.textContent = `直近平均${fmtPace(avgSec)}/km、必達${fmtPace(MUST_PACE_SEC)}/kmと比較`;
+    }
+  }
+
+  async function fetchStravaActivities() {
+    const list = document.getElementById('runs');
+    try {
+      const tokenRes = await fetch('https://www.strava.com/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: STRAVA_CLIENT_ID,
+          client_secret: STRAVA_CLIENT_SECRET,
+          refresh_token: STRAVA_REFRESH_TOKEN,
+          grant_type: 'refresh_token'
+        })
+      });
+      if (!tokenRes.ok) throw new Error('トークン更新に失敗');
+      const tokenData = await tokenRes.json();
+
+      const actRes = await fetch('https://www.strava.com/api/v3/athlete/activities?per_page=10', {
+        headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+      });
+      if (!actRes.ok) throw new Error('活動データ取得に失敗');
+      const activities = await actRes.json();
+
+      const runs = activities
+        .filter(a => a.type === 'Run' && a.distance > 1000)
+        .map(a => {
+          const d = new Date(a.start_date_local);
+          return {
+            date: `${d.getMonth() + 1}/${d.getDate()}`,
+            dist: (a.distance / 1000).toFixed(2),
+            paceSec: a.moving_time / (a.distance / 1000)
+          };
+        });
+
+      renderRuns(runs.map(r => ({ ...r, dist: r.dist + 'km' })));
+      updateInsights(runs);
+    } catch (e) {
+      console.error(e);
+      list.innerHTML = '<div class="cond-empty">Stravaからのデータ取得に失敗しました。時間をおいて再読み込みしてください。</div>';
+    }
   }
 
   function showView(name) {
@@ -607,18 +689,8 @@
     }
   }
 
-  const list = document.getElementById('runs');
-  runs.forEach(r => {
-    const row = document.createElement('div');
-    row.className = 'run-row';
-    const cls = r.paceSec <= r.mustSec ? 'under' : 'over';
-    row.innerHTML = `
-      <div class="run-date">${r.date}</div>
-      <div class="run-dist">${r.dist}</div>
-      <div class="run-pace ${cls}">${fmtPace(r.paceSec)}</div>
-    `;
-    list.appendChild(row);
-  });
+  // ページ読み込み時にStravaから最新データを自動取得
+  fetchStravaActivities();
 </script>
 </body>
 </html>
