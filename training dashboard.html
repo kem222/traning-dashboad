@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>run.the.system — 目標進捗</title>
+<style>
+  :root {
+    --bg: #12181C;
+    --surface: #181F24;
+    --surface-2: #1E262C;
+    --border: #2A333A;
+    --turquoise: #5DCAA5;
+    --turquoise-dim: #1D9E75;
+    --text: #E7ECEA;
+    --text-muted: #7A8580;
+    --text-faint: #4A524E;
+    --coral: #E8836B;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding: 32px 20px 60px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .eyebrow {
+    font-size: 13px;
+    color: var(--text-faint);
+    letter-spacing: 0.02em;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .accent { color: var(--turquoise); }
+
+  .countdown-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 22px 0 4px;
+  }
+  .countdown-num {
+    font-size: 56px;
+    font-weight: 800;
+    color: var(--turquoise);
+    line-height: 1;
+  }
+  .countdown-label {
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+  .race-date { font-size: 13px; color: var(--text-faint); margin-top: 4px; }
+
+  .target-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .target-chip {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .target-chip .k { font-size: 12px; color: var(--text-muted); }
+  .target-chip .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .target-chip.must .v { color: var(--text); }
+  .target-chip.dream .v { color: var(--turquoise); }
+
+  section { margin-top: 40px; }
+  .section-title {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+
+  .pace-compare {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .pace-compare .headline {
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .pace-compare .num { color: var(--turquoise); font-weight: 700; }
+  .bar-track {
+    margin-top: 44px;
+    margin-bottom: 8px;
+    height: 8px;
+    background: var(--surface-2);
+    border-radius: 4px;
+    position: relative;
+    overflow: visible;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--turquoise-dim);
+    border-radius: 4px;
+  }
+  .bar-marker {
+    position: absolute;
+    top: -6px;
+    width: 2px;
+    height: 20px;
+    background: var(--coral);
+  }
+  .bar-marker-label {
+    position: absolute;
+    font-size: 10px;
+    line-height: 1.3;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    text-align: center;
+  }
+  .bar-marker-label.top-label { top: -38px; }
+  .bar-marker-label.bottom-label { top: 16px; }
+  .bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 8px;
+  }
+
+  .runs-list { display: flex; flex-direction: column; gap: 1px; }
+  .run-row {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--surface);
+    gap: 12px;
+  }
+  .run-row:first-child { border-radius: 10px 10px 0 0; }
+  .run-row:last-child { border-radius: 0 0 10px 10px; }
+  .run-date { font-size: 12px; color: var(--text-faint); }
+  .run-dist { font-size: 13px; color: var(--text-muted); }
+  .run-pace { font-size: 15px; font-weight: 700; text-align: right; }
+  .run-pace.under { color: var(--turquoise); }
+  .run-pace.over { color: var(--text-muted); }
+
+  .insight-list { display: flex; flex-direction: column; gap: 12px; }
+  .insight {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--turquoise-dim);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .insight.warn { border-left-color: var(--coral); }
+  .insight b { color: var(--turquoise); }
+  .insight.warn b { color: var(--coral); }
+
+  footer {
+    margin-top: 48px;
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: center;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-top: 24px;
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 4px;
+  }
+  .tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-family: inherit;
+    padding: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tab-btn.active {
+    background: var(--surface-2);
+    color: var(--turquoise);
+    font-weight: 700;
+  }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .pillar-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .pillar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .pillar .k { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  .pillar .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.ok { background: var(--turquoise); }
+  .dot.watch { background: var(--coral); }
+  .pillar .note { font-size: 12px; color: var(--text-faint); margin-top: 6px; line-height: 1.5; }
+
+  .sched-week-label {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  .sched-row {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sched-row:first-child { border-radius: 10px 10px 0 0; }
+  .sched-row:last-child { border-radius: 0 0 10px 10px; border-bottom: none; }
+  .sched-date { color: var(--text-muted); }
+  .sched-content { color: var(--text); }
+  .sched-row.race { border-left: 3px solid var(--turquoise); }
+  .sched-row.race .sched-content { color: var(--turquoise); font-weight: 700; }
+  .sched-row.done { border-left: 3px solid var(--turquoise-dim); }
+  .sched-row.extra { border-left: 3px solid var(--coral); }
+  .sched-row.care { border-left: 3px solid var(--text-faint); }
+  .sched-row .check {
+    font-size: 11px;
+    color: var(--turquoise);
+    margin-left: 8px;
+  }
+
+  .cond-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cond-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cond-label:first-child { margin-top: 0; }
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 8px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .seg button.active {
+    background: var(--turquoise-dim);
+    border-color: var(--turquoise);
+    color: #fff;
+    font-weight: 700;
+  }
+  .seg button.active[data-val="要注意"] {
+    background: var(--coral);
+    border-color: var(--coral);
+  }
+  textarea {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 10px;
+    min-height: 60px;
+    resize: vertical;
+  }
+  .cond-submit {
+    margin-top: 16px;
+    background: var(--turquoise-dim);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .cond-status { font-size: 12px; color: var(--turquoise); margin-top: 8px; min-height: 16px; }
+
+  .cond-history { display: flex; flex-direction: column; gap: 8px; }
+  .cond-entry {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+  .cond-entry-date { color: var(--text-faint); font-size: 11px; margin-bottom: 6px; }
+  .cond-entry-tags { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .cond-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .cond-tag.watch { color: var(--coral); }
+  .cond-entry-note { color: var(--text); line-height: 1.5; }
+  .cond-empty { color: var(--text-faint); font-size: 13px; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+  <div class="eyebrow">run.the.system / training log</div>
+  <h1>10.10 北赤羽ハーフ<br>までの<span class="accent">現在地</span></h1>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showView('progress')">進捗</button>
+    <button class="tab-btn" onclick="showView('schedule')">スケジュール</button>
+    <button class="tab-btn" onclick="showView('condition')">コンディション</button>
+  </div>
+
+  <div id="view-progress" class="view active">
+
+  <div class="countdown-row">
+    <div class="countdown-num" id="days">--</div>
+    <div class="countdown-label">days</div>
+  </div>
+  <div class="race-date">2026.10.10（土）9:30 スタート</div>
+
+  <div class="target-row">
+    <div class="target-chip must">
+      <div class="k">絶対達成</div>
+      <div class="v">1:39</div>
+    </div>
+    <div class="target-chip dream">
+      <div class="k">理想（7年前の自分超え）</div>
+      <div class="v">1:35</div>
+    </div>
+  </div>
+
+  <section>
+    <div class="section-title">4つの達成要素</div>
+    <div class="pillar-grid">
+      <div class="pillar">
+        <div class="k">距離耐性</div>
+        <div class="status"><span class="dot watch"></span>要強化</div>
+        <div class="note">最長15km、本番まで+6km分足りない</div>
+      </div>
+      <div class="pillar">
+        <div class="k">ペース出力</div>
+        <div class="status"><span class="dot ok"></span>達成圏内</div>
+        <div class="note">直近平均4:43/km、必達4:42/kmに肉薄</div>
+      </div>
+      <div class="pillar">
+        <div class="k">心拍の粘り</div>
+        <div class="status"><span class="dot watch"></span>データ要確認</div>
+        <div class="note">直近センサー不調の疑い、次回計測で再判定</div>
+      </div>
+      <div class="pillar">
+        <div class="k">負荷管理</div>
+        <div class="status"><span class="dot ok"></span>安全域</div>
+        <div class="note">週間距離の増加は目安10%以内で推移中</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title">平均ペース vs 目標</div>
+    <div class="pace-compare">
+      <div class="headline">
+        直近6回の平均ペースは<br>
+        <span class="num">4:43/km</span> ── 必達ペース(4:42/km)と<br>
+        ほぼ同じ位置にいる。
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width: 96%;"></div>
+        <div class="bar-marker" style="left: 90%; background:#5DCAA5;"></div>
+        <div class="bar-marker-label top-label" style="left: 90%; color:#5DCAA5; transform: translateX(-70%);">理想<br>4:30</div>
+        <div class="bar-marker" style="left: 94%;"></div>
+        <div class="bar-marker-label bottom-label" style="left: 94%; transform: translateX(-30%);">必達<br>4:42</div>
+      </div>
+      <div class="bar-labels" style="margin-top: 28px;"><span>5:30/km</span><span>4:00/km</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title">直近10回のペース記録</div>
+    <div class="runs-list" id="runs"></div>
+  </section>
+
+  <section>
+    <div class="section-title">次にやること</div>
+    <div class="insight-list">
+      <div class="insight">
+        平均ペースはすでに必達ライン付近。<b>スピードの引き出しは足りている。</b>
+      </div>
+      <div class="insight warn">
+        最長距離はまだ<b>15km</b>（8/11）。本番21kmまで、あと6km分の距離耐性が課題。
+      </div>
+      <div class="insight">
+        次のチェックポイントは<b>9/19の18kmロング走</b>。ここで目標ペースを維持できるかを見る。
+      </div>
+    </div>
+  </section>
+
+  </div><!-- /view-progress -->
+
+  <div id="view-schedule" class="view">
+    <section style="margin-top:24px;">
+      <div class="section-title">練習スケジュール（〜本番）</div>
+      <div class="sched-week-label">9月</div>
+      <div class="sched-row done"><div class="sched-date">9/2(水)</div><div class="sched-content">5km 高速走 <span class="check">✓ 実施</span></div></div>
+      <div class="sched-row extra"><div class="sched-date">9/4(金)</div><div class="sched-content">12km（予定外・ウォームアップ検証） <span class="check">✓ 実施</span></div></div>
+      <div class="sched-row"><div class="sched-date">9/5(土)</div><div class="sched-content">15km レースペース</div></div>
+      <div class="sched-row"><div class="sched-date">9/8(火)</div><div class="sched-content">5km 高速走</div></div>
+      <div class="sched-row"><div class="sched-date">9/10(木)</div><div class="sched-content">15km レースペース</div></div>
+      <div class="sched-row care"><div class="sched-date">9/10(木)</div><div class="sched-content">スポーツ整体（コンディション調整）</div></div>
+      <div class="sched-row"><div class="sched-date">9/15(火)</div><div class="sched-content">6km ペース走</div></div>
+      <div class="sched-row"><div class="sched-date">9/19(土)</div><div class="sched-content">18km ロング走（本番前最大負荷）</div></div>
+      <div class="sched-row"><div class="sched-date">9/22(火)</div><div class="sched-content">5km ジョグ+流し</div></div>
+      <div class="sched-row"><div class="sched-date">9/26(土)</div><div class="sched-content">10km ペース走</div></div>
+      <div class="sched-row"><div class="sched-date">9/29(火)</div><div class="sched-content">5km ジョグ+流し</div></div>
+
+      <div class="sched-week-label" style="margin-top:20px;">10月</div>
+      <div class="sched-row"><div class="sched-date">10/3(土)</div><div class="sched-content">10km ペース走</div></div>
+      <div class="sched-row"><div class="sched-date">10/7(水)</div><div class="sched-content">4km ジョグ+1レース（最終刺激）</div></div>
+      <div class="sched-row race"><div class="sched-date">10/10(土)</div><div class="sched-content">北赤羽ハーフマラソン本番 9:30〜</div></div>
+    </section>
+  </div><!-- /view-schedule -->
+
+  <div id="view-condition" class="view">
+    <section style="margin-top:24px;">
+      <div class="section-title">今日のコンディションを記録</div>
+      <div class="cond-form">
+        <label class="cond-label">左膝</label>
+        <div class="seg" id="seg-knee">
+          <button type="button" data-val="良好">良好</button>
+          <button type="button" data-val="違和感">違和感</button>
+          <button type="button" data-val="要注意">要注意</button>
+        </div>
+
+        <label class="cond-label">腰</label>
+        <div class="seg" id="seg-back">
+          <button type="button" data-val="良好">良好</button>
+          <button type="button" data-val="違和感">違和感</button>
+          <button type="button" data-val="要注意">要注意</button>
+        </div>
+
+        <label class="cond-label">下半身の張り・違和感（自由記述）</label>
+        <textarea id="cond-note" placeholder="例：右ふくらはぎに軽い張り"></textarea>
+
+        <label class="cond-label">
+          <input type="checkbox" id="cond-care"> 整体・ケアを受けた日
+        </label>
+
+        <button class="cond-submit" onclick="saveCondition()">記録する</button>
+        <div id="cond-status" class="cond-status"></div>
+      </div>
+    </section>
+
+    <section style="margin-top:32px;">
+      <div class="section-title">記録の履歴</div>
+      <div id="cond-history" class="cond-history"></div>
+    </section>
+  </div><!-- /view-condition -->
+
+  <footer>Strava連携データより自動生成 ／ run.the.system</footer>
+
+<script>
+  // 本番までの日数を計算
+  const raceDate = new Date('2026-10-10T09:30:00+09:00');
+  const today = new Date(); // このダッシュボードを開いた日を基準
+  const diffDays = Math.max(0, Math.ceil((raceDate - today) / (1000*60*60*24)));
+  document.getElementById('days').textContent = diffDays;
+
+  // 直近の実データ(Stravaより取得済み)
+  const runs = [
+    { date: '9/4',  dist: '12.01km', paceSec: 296, mustSec: 282 },
+    { date: '9/2',  dist: '5.01km',  paceSec: 253, mustSec: 282 },
+    { date: '8/29', dist: '14.00km', paceSec: 295, mustSec: 282 },
+    { date: '8/27', dist: '6.02km',  paceSec: 270, mustSec: 282 },
+    { date: '8/23', dist: '8.48km',  paceSec: 307, mustSec: 282 },
+    { date: '8/18', dist: '5.01km',  paceSec: 275, mustSec: 282 },
+    { date: '8/16', dist: '10.01km', paceSec: 349, mustSec: 282 },
+    { date: '8/15', dist: '7.01km',  paceSec: 267, mustSec: 282 },
+    { date: '8/11', dist: '15.01km', paceSec: 325, mustSec: 282 },
+    { date: '8/9',  dist: '8.45km',  paceSec: 305, mustSec: 282 },
+  ];
+
+  function fmtPace(sec) {
+    const m = Math.floor(sec / 60);
+    const s = String(Math.round(sec % 60)).padStart(2, '0');
+    return `${m}:${s}/km`;
+  }
+
+  function showView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('view-' + name).classList.add('active');
+    event.currentTarget.classList.add('active');
+    if (name === 'condition') loadConditionHistory();
+  }
+
+  // セグメントボタンの選択状態管理
+  let selectedKnee = null, selectedBack = null;
+  document.querySelectorAll('#seg-knee button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#seg-knee button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedKnee = btn.dataset.val;
+    });
+  });
+  document.querySelectorAll('#seg-back button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#seg-back button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedBack = btn.dataset.val;
+    });
+  });
+
+  async function saveCondition() {
+    const statusEl = document.getElementById('cond-status');
+    if (!selectedKnee || !selectedBack) {
+      statusEl.textContent = '左膝・腰の状態を選んでください';
+      statusEl.style.color = 'var(--coral)';
+      return;
+    }
+    const entry = {
+      date: new Date().toISOString(),
+      knee: selectedKnee,
+      back: selectedBack,
+      note: document.getElementById('cond-note').value.trim(),
+      care: document.getElementById('cond-care').checked
+    };
+    try {
+      const raw = localStorage.getItem('condition-log');
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(entry);
+      localStorage.setItem('condition-log', JSON.stringify(list));
+      statusEl.textContent = '記録しました';
+      statusEl.style.color = 'var(--turquoise)';
+      document.getElementById('cond-note').value = '';
+      document.getElementById('cond-care').checked = false;
+      document.querySelectorAll('#seg-knee button, #seg-back button').forEach(b => b.classList.remove('active'));
+      selectedKnee = null; selectedBack = null;
+      loadConditionHistory();
+    } catch (e) {
+      statusEl.textContent = '保存に失敗しました（ブラウザの設定をご確認ください）';
+      statusEl.style.color = 'var(--coral)';
+    }
+  }
+
+  function loadConditionHistory() {
+    const container = document.getElementById('cond-history');
+    try {
+      const raw = localStorage.getItem('condition-log');
+      const list = raw ? JSON.parse(raw) : [];
+      if (list.length === 0) {
+        container.innerHTML = '<div class="cond-empty">まだ記録がありません</div>';
+        return;
+      }
+      container.innerHTML = list.map(e => {
+        const d = new Date(e.date);
+        const dateStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const kneeCls = e.knee === '要注意' ? 'watch' : '';
+        const backCls = e.back === '要注意' ? 'watch' : '';
+        return `
+          <div class="cond-entry">
+            <div class="cond-entry-date">${dateStr}${e.care ? ' ・ 整体ケア日' : ''}</div>
+            <div class="cond-entry-tags">
+              <span class="cond-tag ${kneeCls}">左膝: ${e.knee}</span>
+              <span class="cond-tag ${backCls}">腰: ${e.back}</span>
+            </div>
+            ${e.note ? `<div class="cond-entry-note">${e.note}</div>` : ''}
+          </div>`;
+      }).join('');
+    } catch (e) {
+      container.innerHTML = '<div class="cond-empty">履歴を読み込めませんでした</div>';
+    }
+  }
+
+  const list = document.getElementById('runs');
+  runs.forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'run-row';
+    const cls = r.paceSec <= r.mustSec ? 'under' : 'over';
+    row.innerHTML = `
+      <div class="run-date">${r.date}</div>
+      <div class="run-dist">${r.dist}</div>
+      <div class="run-pace ${cls}">${fmtPace(r.paceSec)}</div>
+    `;
+    list.appendChild(row);
+  });
+</script>
+</body>
+</html>
