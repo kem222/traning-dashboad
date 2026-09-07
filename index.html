@@ -134,7 +134,7 @@
   .runs-list { display: flex; flex-direction: column; gap: 1px; }
   .run-row {
     display: grid;
-    grid-template-columns: 56px 1fr auto;
+    grid-template-columns: 100px 1fr auto;
     align-items: center;
     padding: 12px 16px;
     background: var(--surface);
@@ -142,11 +142,23 @@
   }
   .run-row:first-child { border-radius: 10px 10px 0 0; }
   .run-row:last-child { border-radius: 0 0 10px 10px; }
-  .run-date { font-size: 12px; color: var(--text-faint); }
+  .run-date { font-size: 12px; color: var(--text-faint); display: flex; align-items: center; gap: 6px; }
+  .run-tag {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .run-tag.tag-race { color: var(--turquoise); background: rgba(93,202,165,0.12); }
+  .run-tag.tag-speed { color: var(--coral); background: rgba(232,131,107,0.12); }
+  .run-tag.tag-jog { color: var(--text-faint); }
   .run-dist { font-size: 13px; color: var(--text-muted); }
   .run-pace { font-size: 15px; font-weight: 700; text-align: right; }
   .run-pace.under { color: var(--turquoise); }
   .run-pace.over { color: var(--text-muted); }
+  .run-pace.muted { color: var(--text-faint); font-weight: 500; }
 
   .insight-list { display: flex; flex-direction: column; gap: 12px; }
   .insight {
@@ -372,12 +384,12 @@
       <div class="pillar">
         <div class="k">距離耐性</div>
         <div class="status"><span class="dot watch"></span>要強化</div>
-        <div class="note">最長15km、本番まで+6km分足りない</div>
+        <div class="note">レースペースでの最長データ取得中...</div>
       </div>
       <div class="pillar">
         <div class="k">ペース出力</div>
         <div class="status"><span class="dot ok"></span>達成圏内</div>
-        <div class="note">直近平均4:43/km、必達4:42/kmに肉薄</div>
+        <div class="note">レースペース走のデータ取得中...</div>
       </div>
       <div class="pillar">
         <div class="k">心拍の粘り</div>
@@ -396,9 +408,7 @@
     <div class="section-title">平均ペース vs 目標</div>
     <div class="pace-compare">
       <div class="headline">
-        直近6回の平均ペースは<br>
-        <span class="num">4:43/km</span> ── 必達ペース(4:42/km)と<br>
-        ほぼ同じ位置にいる。
+        レースペース走のデータを取得中...
       </div>
       <div class="bar-track">
         <div class="bar-fill" style="width: 53%;"></div>
@@ -507,11 +517,19 @@
   const STRAVA_REFRESH_TOKEN = '060e3da7fcfeb1c668bd57a25895419329e9f4de';
   const MUST_PACE_SEC = 282; // 1:39ハーフの必達ペース(秒/km)
   const DREAM_PACE_SEC = 270; // 1:35理想ペース(秒/km)
+  const RACE_PACE_BAND = 20; // 必達ペース±20秒を「レースペース走」とみなす帯
 
   function fmtPace(sec) {
     const m = Math.floor(sec / 60);
     const s = String(Math.round(sec % 60)).padStart(2, '0');
     return `${m}:${s}`;
+  }
+
+  // ペースから意図を自動分類(ジョグ/レースペース走/スピード刺激)
+  function classifyRun(paceSec) {
+    if (paceSec < MUST_PACE_SEC - RACE_PACE_BAND) return { tag: 'speed', label: 'スピード刺激' };
+    if (paceSec <= MUST_PACE_SEC + RACE_PACE_BAND) return { tag: 'race', label: 'レースペース走' };
+    return { tag: 'jog', label: 'ジョグ/Zone2' };
   }
 
   function renderRuns(runs) {
@@ -520,9 +538,10 @@
     runs.forEach(r => {
       const row = document.createElement('div');
       row.className = 'run-row';
-      const cls = r.paceSec <= MUST_PACE_SEC ? 'under' : 'over';
+      const c = classifyRun(r.paceSec);
+      const cls = c.tag === 'jog' ? 'muted' : (r.paceSec <= MUST_PACE_SEC ? 'under' : 'over');
       row.innerHTML = `
-        <div class="run-date">${r.date}</div>
+        <div class="run-date">${r.date}<span class="run-tag tag-${c.tag}">${c.label}</span></div>
         <div class="run-dist">${r.dist}</div>
         <div class="run-pace ${cls}">${fmtPace(r.paceSec)}/km</div>
       `;
@@ -531,34 +550,53 @@
   }
 
   function updateInsights(runs) {
-    // 直近6回(距離1km以上)の平均ペース
-    const recent = runs.slice(0, 6);
-    const avgSec = recent.reduce((s, r) => s + r.paceSec, 0) / recent.length;
-    const headline = document.querySelector('.pace-compare .headline');
-    if (headline) {
-      headline.innerHTML = `直近${recent.length}回の平均ペースは<br><span class="num">${fmtPace(avgSec)}/km</span> ── 必達ペース(${fmtPace(MUST_PACE_SEC)}/km)と<br>${avgSec <= MUST_PACE_SEC ? '目標に到達している。' : 'の差を詰めている段階。'}`;
-    }
-    // バーの幅・マーカー位置を実際のペーススケール(5:30/km=330秒〜4:00/km=240秒)で計算
-    const range = [330, 240];
-    const pct = v => Math.max(0, Math.min(100, ((range[0] - v) / (range[0] - range[1])) * 100));
-    const fill = document.querySelector('.bar-fill');
-    if (fill) fill.style.width = pct(avgSec) + '%';
-    document.querySelectorAll('.bar-marker')[0].style.left = pct(MUST_PACE_SEC) + '%';
-    document.querySelectorAll('.bar-marker-label')[0].style.left = pct(MUST_PACE_SEC) + '%';
-    document.querySelectorAll('.bar-marker')[1].style.left = pct(DREAM_PACE_SEC) + '%';
-    document.querySelectorAll('.bar-marker-label')[1].style.left = pct(DREAM_PACE_SEC) + '%';
+    // レースペース走(意図的にレースペース付近で走った日)だけを判定対象にする
+    const raceRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'race');
+    const jogRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'jog');
 
-    // 最長距離を検出して「距離耐性」カードを更新
-    const longest = Math.max(...runs.map(r => parseFloat(r.dist)));
+    const headline = document.querySelector('.pace-compare .headline');
+    if (raceRuns.length === 0) {
+      if (headline) headline.innerHTML = `直近10回に<b>レースペース走(必達±20秒)がまだない。</b><br>ジョグ中心の期間か、次回意図的にレースペースで走る回を作ると判定できる。`;
+    } else {
+      const recent = raceRuns.slice(0, 6);
+      const avgSec = recent.reduce((s, r) => s + r.paceSec, 0) / recent.length;
+      if (headline) {
+        headline.innerHTML = `レースペース走${recent.length}回の平均は<br><span class="num">${fmtPace(avgSec)}/km</span> ── 必達ペース(${fmtPace(MUST_PACE_SEC)}/km)と<br>${avgSec <= MUST_PACE_SEC ? '目標に到達している。' : 'の差を詰めている段階。'}`;
+      }
+      const range = [330, 240];
+      const pct = v => Math.max(0, Math.min(100, ((range[0] - v) / (range[0] - range[1])) * 100));
+      const fill = document.querySelector('.bar-fill');
+      if (fill) fill.style.width = pct(avgSec) + '%';
+    }
+
+    const range2 = [330, 240];
+    const pct2 = v => Math.max(0, Math.min(100, ((range2[0] - v) / (range2[0] - range2[1])) * 100));
+    document.querySelectorAll('.bar-marker')[0].style.left = pct2(MUST_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker-label')[0].style.left = pct2(MUST_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker')[1].style.left = pct2(DREAM_PACE_SEC) + '%';
+    document.querySelectorAll('.bar-marker-label')[1].style.left = pct2(DREAM_PACE_SEC) + '%';
+
+    // 距離耐性:レースペース走に限定した最長距離で判定(ジョグの距離は含めない)
+    const longestRace = raceRuns.length ? Math.max(...raceRuns.map(r => parseFloat(r.dist))) : 0;
+    const totalVolume = runs.reduce((s, r) => s + parseFloat(r.dist), 0).toFixed(1);
     const distPillarNote = document.querySelectorAll('.pillar .note')[0];
     if (distPillarNote) {
-      const gap = (21.1 - longest).toFixed(1);
-      distPillarNote.textContent = `最長${longest}km、本番まで+${gap}km分足りない`;
+      if (raceRuns.length === 0) {
+        distPillarNote.textContent = `レースペースでの距離実績なし(総走行${totalVolume}km、うちジョグ${jogRuns.length}本)`;
+      } else {
+        const gap = (21.1 - longestRace).toFixed(1);
+        distPillarNote.textContent = `レースペースでの最長${longestRace}km、本番まで+${gap}km(総走行${totalVolume}km)`;
+      }
     }
-    // ペース出力カードも更新
+    // ペース出力カードも更新(レースペース走のみで判定)
     const pacePillarNote = document.querySelectorAll('.pillar .note')[1];
     if (pacePillarNote) {
-      pacePillarNote.textContent = `直近平均${fmtPace(avgSec)}/km、必達${fmtPace(MUST_PACE_SEC)}/kmと比較`;
+      if (raceRuns.length === 0) {
+        pacePillarNote.textContent = `レースペース走のデータがまだありません`;
+      } else {
+        const avgSec = raceRuns.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRuns.length);
+        pacePillarNote.textContent = `レースペース走平均${fmtPace(avgSec)}/km、必達${fmtPace(MUST_PACE_SEC)}/kmと比較`;
+      }
     }
   }
 
