@@ -762,7 +762,7 @@
       statusEl.innerHTML = '<span class="dot watch"></span>やや波あり';
       note.textContent = `レースペース走${raceRunsWithHr.length}回で平均心拍が最大心拍の${pct}%。序盤や終盤にスパイクが出ている可能性`;
     } else {
-      statusEl.innerHTML = '<span class="dot warn"></span>要強化';
+      statusEl.innerHTML = '<span class="dot watch"></span>要強化';
       note.textContent = `レースペース走${raceRunsWithHr.length}回で平均心拍が最大心拍の${pct}%。心拍の波が大きく、粘りに課題あり`;
     }
   }
@@ -819,10 +819,12 @@
       statusEl.innerHTML = '<span class="dot watch"></span>やや急増';
       note.textContent = `週間距離は前週比${sign}${changePct.toFixed(0)}%(${completedPrev.toFixed(1)}→${completedLast.toFixed(1)}km)。目安10%を超えて増加中`;
     } else {
-      statusEl.innerHTML = '<span class="dot warn"></span>要注意';
+      statusEl.innerHTML = '<span class="dot watch"></span>要注意';
       note.textContent = `週間距離は前週比${sign}${changePct.toFixed(0)}%(${completedPrev.toFixed(1)}→${completedLast.toFixed(1)}km)。急激な増加は怪我リスク増`;
     }
   }
+
+  async function fetchStravaActivities() {
     const list = document.getElementById('runs');
     try {
       const tokenRes = await fetch('https://www.strava.com/oauth/token', {
