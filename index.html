@@ -500,6 +500,15 @@
   <footer>Strava連携データより自動生成 ／ run.the.system</footer>
 
 <script>
+  // Stravaのstart_date_localは「現地時刻なのに末尾がZ(UTC扱い)」という仕様のため、
+  // そのままnew Date()に渡すとブラウザのタイムゾーン分(JSTなら+9時間)ずれてしまう。
+  // 文字列から直接年月日時分秒を取り出して、ローカル時刻として組み立て直す。
+  function parseStravaLocalDate(s) {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+    if (!m) return new Date(s);
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  }
+
   // 本番までの日数を計算
   const raceDate = new Date('2026-10-10T09:30:00+09:00');
   const today = new Date(); // このダッシュボードを開いた日を基準
@@ -567,7 +576,7 @@
     return activities
       .filter(a => a.type === 'Run' && a.distance > 1000)
       .map(a => {
-        const d = new Date(a.start_date_local);
+        const d = parseStravaLocalDate(a.start_date_local);
         const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         return { dateKey, dist: a.distance / 1000, paceSec: a.moving_time / (a.distance / 1000) };
       });
@@ -752,7 +761,7 @@
       const runs = activities
         .filter(a => a.type === 'Run' && a.distance > 1000)
         .map(a => {
-          const d = new Date(a.start_date_local);
+          const d = parseStravaLocalDate(a.start_date_local);
           return {
             date: `${d.getMonth() + 1}/${d.getDate()}`,
             dist: (a.distance / 1000).toFixed(2),
