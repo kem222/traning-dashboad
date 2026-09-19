@@ -439,16 +439,8 @@
 
   <section>
     <div class="section-title">次にやること</div>
-    <div class="insight-list">
-      <div class="insight">
-        平均ペースはすでに必達ライン付近。<b>スピードの引き出しは足りている。</b>
-      </div>
-      <div class="insight warn">
-        最長距離はまだ<b>15km</b>（8/11）。本番21kmまで、あと6km分の距離耐性が課題。
-      </div>
-      <div class="insight">
-        次のチェックポイントは<b>9/19の18kmロング走</b>。ここで目標ペースを維持できるかを見る。
-      </div>
+    <div class="insight-list" id="next-actions-list">
+      <div class="insight">データ取得中...</div>
     </div>
   </section>
 
@@ -824,6 +816,55 @@
     }
   }
 
+  // 「次にやること」を実データから動的に生成する
+  function updateNextActions(runs) {
+    const container = document.getElementById('next-actions-list');
+    if (!container) return;
+
+    const raceRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'race');
+    const items = [];
+
+    // ① ペースの仕上がり具合
+    if (raceRuns.length === 0) {
+      items.push({ warn: true, html: 'レースペース走のデータがまだない。まずは意図的にレースペースで走る回を作りたい。' });
+    } else {
+      const avgSec = raceRuns.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRuns.length);
+      if (avgSec <= MUST_PACE_SEC) {
+        items.push({ warn: false, html: `平均ペースはすでに必達ライン付近。<b>スピードの引き出しは足りている。</b>` });
+      } else {
+        const gapSec = Math.round(avgSec - MUST_PACE_SEC);
+        items.push({ warn: true, html: `平均ペースは必達より<b>${gapSec}秒/km</b>遅い。ここの底上げが課題。` });
+      }
+    }
+
+    // ② 距離耐性
+    if (raceRuns.length === 0) {
+      items.push({ warn: true, html: '距離耐性はまだ判定できるデータがない。' });
+    } else {
+      let longest = raceRuns[0];
+      raceRuns.forEach(r => { if (parseFloat(r.dist) > parseFloat(longest.dist)) longest = r; });
+      const gap = (21.1 - parseFloat(longest.dist)).toFixed(1);
+      if (parseFloat(gap) <= 0) {
+        items.push({ warn: false, html: `最長距離は<b>${longest.dist}km</b>（${longest.date}）。本番21kmを既にカバーできている。` });
+      } else {
+        items.push({ warn: true, html: `最長距離はまだ<b>${longest.dist}km</b>（${longest.date}）。本番21kmまで、あと${gap}km分の距離耐性が課題。` });
+      }
+    }
+
+    // ③ 次のチェックポイント(PLANNED_SCHEDULEから今日より後の直近1件)
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const upcoming = PLANNED_SCHEDULE
+      .filter(p => new Date(p.date + 'T00:00:00+09:00') >= todayMidnight)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
+    if (upcoming) {
+      const d = new Date(upcoming.date + 'T00:00:00+09:00');
+      items.push({ warn: false, html: `次のチェックポイントは<b>${d.getMonth() + 1}/${d.getDate()}の${upcoming.label}</b>。ここで目標ペースを維持できるかを見る。` });
+    }
+
+    container.innerHTML = items.map(it => `<div class="insight${it.warn ? ' warn' : ''}">${it.html}</div>`).join('');
+  }
+
   async function fetchStravaActivities() {
     const list = document.getElementById('runs');
     try {
@@ -862,6 +903,7 @@
       renderRuns(runs.map(r => ({ ...r, dist: r.dist + 'km' })));
       updateInsights(runs);
       updateHRPillar(runs);
+      updateNextActions(runs);
 
       // 同じアクセストークンでスケジュールタブ用の履歴データも取得
       try {
