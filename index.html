@@ -542,7 +542,7 @@
     { date: '2026-09-15', label: '6km ペース走' },
     { date: '2026-09-19', label: '18km ロング走（本番前最大負荷）' },
     { date: '2026-09-22', label: '5km ジョグ+流し' },
-    { date: '2026-09-26', label: '10km ペース走' },
+    { date: '2026-09-26', label: '朝:会社メンバーと軽めラン／午後:18kmロング走' },
     { date: '2026-09-29', label: '5km ジョグ+流し' },
     { date: '2026-10-03', label: '10km ペース走' },
     { date: '2026-10-07', label: '4km ジョグ+1レース（最終刺激）' },
@@ -592,6 +592,14 @@
     if (headline) headline.innerHTML = `トレーニング期間の<span class="num">${pct.toFixed(0)}%</span>が経過`;
   }
 
+  // 日付文字列(YYYY-MM-DD)から、閲覧環境のタイムゾーンに左右されない
+  // 年月日と曜日を取り出す(UTC基準でパースすれば文字列通りの日付になる)
+  function dateParts(dateStr) {
+    const [y, m, dd] = dateStr.split('-').map(Number);
+    const weekdayIdx = new Date(Date.UTC(y, m - 1, dd)).getUTCDay();
+    return { y, m, d: dd, weekday: WEEKDAY_JP[weekdayIdx] };
+  }
+
   function buildScheduleRows(actualRuns) {
     const container = document.getElementById('schedule-container');
     const todayMidnight = new Date();
@@ -610,7 +618,8 @@
 
     // 1. 予定(未来)をベースに、実績があれば実施済みとしてマッチ
     PLANNED_SCHEDULE.forEach(p => {
-      const d = new Date(p.date + 'T00:00:00+09:00');
+      const sortD = new Date(p.date + 'T00:00:00+09:00'); // 並び替え・前後判定専用(JST基準の実時刻)
+      const parts = dateParts(p.date); // 表示用(タイムゾーンに左右されない)
       const match = byDate[p.date];
       let cls = '', content;
       if (p.tag === 'race') {
@@ -622,25 +631,26 @@
         const label = `${match.dist.toFixed(1).replace(/\.0$/, '')}km ${classifyForSchedule(match.dist, avgPace)}`;
         cls = 'done'; content = `${label} <span class="check">✓ 実施</span>`;
         usedDates.add(p.date);
-      } else if (d < todayMidnight) {
+      } else if (sortD < todayMidnight) {
         content = `${p.label}（未実施）`;
       } else {
         content = p.label;
       }
-      rows.push({ d, weekday: WEEKDAY_JP[d.getDay()], cls, content });
+      rows.push({ sortD, m: parts.m, d: parts.d, weekday: parts.weekday, cls, content });
     });
 
     // 2. 予定になかった実施済みラン(予定外のラン)も自動で表示
     Object.keys(byDate).forEach(dateKey => {
       if (usedDates.has(dateKey)) return;
-      const d = new Date(dateKey + 'T00:00:00+09:00');
+      const sortD = new Date(dateKey + 'T00:00:00+09:00');
+      const parts = dateParts(dateKey);
       const { dist, weighted } = byDate[dateKey];
       const avgPace = weighted / dist;
       const label = `${dist.toFixed(1).replace(/\.0$/, '')}km ${classifyForSchedule(dist, avgPace)}`;
-      rows.push({ d, weekday: WEEKDAY_JP[d.getDay()], cls: 'done', content: `${label} <span class="check">✓ 実施</span>` });
+      rows.push({ sortD, m: parts.m, d: parts.d, weekday: parts.weekday, cls: 'done', content: `${label} <span class="check">✓ 実施</span>` });
     });
 
-    rows.sort((a, b) => a.d - b.d);
+    rows.sort((a, b) => a.sortD - b.sortD);
 
     if (rows.length === 0) {
       container.innerHTML = '<div class="cond-empty">スケジュールデータがありません</div>';
@@ -650,12 +660,11 @@
     let html = '';
     let curMonth = null;
     rows.forEach(r => {
-      const m = r.d.getMonth() + 1;
-      if (m !== curMonth) {
-        html += `<div class="sched-week-label"${curMonth !== null ? ' style="margin-top:20px;"' : ''}>${m}月</div>`;
-        curMonth = m;
+      if (r.m !== curMonth) {
+        html += `<div class="sched-week-label"${curMonth !== null ? ' style="margin-top:20px;"' : ''}>${r.m}月</div>`;
+        curMonth = r.m;
       }
-      html += `<div class="sched-row ${r.cls}"><div class="sched-date">${m}/${r.d.getDate()}(${r.weekday})</div><div class="sched-content">${r.content}</div></div>`;
+      html += `<div class="sched-row ${r.cls}"><div class="sched-date">${r.m}/${r.d}(${r.weekday})</div><div class="sched-content">${r.content}</div></div>`;
     });
     container.innerHTML = html;
   }
@@ -681,15 +690,18 @@
     // レースペース走(意図的にレースペース付近で走った日)だけを判定対象にする
     const raceRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'race');
     const jogRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'jog');
+    // 平均ペースの判定は10km以上のレースペース走に限定する。
+    // 短い距離(調整走やレース中の揺らぎ想定の走り)が混ざると、本番相当の実力を映しにくくなるため。
+    const raceRunsLong = raceRuns.filter(r => parseFloat(r.dist) >= 10);
 
     const headline = document.querySelector('.pace-compare .headline');
-    if (raceRuns.length === 0) {
-      if (headline) headline.innerHTML = `直近10回に<b>レースペース走(必達±20秒)がまだない。</b><br>ジョグ中心の期間か、次回意図的にレースペースで走る回を作ると判定できる。`;
+    if (raceRunsLong.length === 0) {
+      if (headline) headline.innerHTML = `直近10回に<b>10km以上のレースペース走がまだない。</b><br>10km未満の走りは平均ペースの判定対象に含めていない。`;
     } else {
-      const recent = raceRuns.slice(0, 6);
+      const recent = raceRunsLong.slice(0, 6);
       const avgSec = recent.reduce((s, r) => s + r.paceSec, 0) / recent.length;
       if (headline) {
-        headline.innerHTML = `レースペース走${recent.length}回の平均は<br><span class="num">${fmtPace(avgSec)}/km</span> ── 必達ペース(${fmtPace(MUST_PACE_SEC)}/km)と<br>${avgSec <= MUST_PACE_SEC ? '目標に到達している。' : 'の差を詰めている段階。'}`;
+        headline.innerHTML = `レースペース走(10km以上)${recent.length}回の平均は<br><span class="num">${fmtPace(avgSec)}/km</span> ── 必達ペース(${fmtPace(MUST_PACE_SEC)}/km)と<br>${avgSec <= MUST_PACE_SEC ? '目標に到達している。' : 'の差を詰めている段階。'}`;
       }
       const range = [330, 240];
       const pct = v => Math.max(0, Math.min(100, ((range[0] - v) / (range[0] - range[1])) * 100));
@@ -704,7 +716,7 @@
     document.querySelectorAll('.bar-marker')[1].style.left = pct2(DREAM_PACE_SEC) + '%';
     document.querySelectorAll('.bar-marker-label')[1].style.left = pct2(DREAM_PACE_SEC) + '%';
 
-    // 距離耐性:レースペース走に限定した最長距離で判定(ジョグの距離は含めない)
+    // 距離耐性:レースペース走に限定した最長距離で判定(こちらは距離そのものを見る指標なので10km縛りは適用しない)
     const longestRace = raceRuns.length ? Math.max(...raceRuns.map(r => parseFloat(r.dist))) : 0;
     const totalVolume = runs.reduce((s, r) => s + parseFloat(r.dist), 0).toFixed(1);
     const distPillarNote = document.querySelectorAll('.pillar .note')[0];
@@ -716,14 +728,14 @@
         distPillarNote.textContent = `レースペースでの最長${longestRace}km、本番まで+${gap}km(総走行${totalVolume}km)`;
       }
     }
-    // ペース出力カードも更新(レースペース走のみで判定)
+    // ペース出力カードも更新(10km以上のレースペース走のみで判定)
     const pacePillarNote = document.querySelectorAll('.pillar .note')[1];
     if (pacePillarNote) {
-      if (raceRuns.length === 0) {
-        pacePillarNote.textContent = `レースペース走のデータがまだありません`;
+      if (raceRunsLong.length === 0) {
+        pacePillarNote.textContent = `10km以上のレースペース走のデータがまだありません`;
       } else {
-        const avgSec = raceRuns.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRuns.length);
-        pacePillarNote.textContent = `レースペース走平均${fmtPace(avgSec)}/km、必達${fmtPace(MUST_PACE_SEC)}/kmと比較`;
+        const avgSec = raceRunsLong.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRunsLong.length);
+        pacePillarNote.textContent = `レースペース走(10km以上)平均${fmtPace(avgSec)}/km、必達${fmtPace(MUST_PACE_SEC)}/kmと比較`;
       }
     }
   }
@@ -766,13 +778,14 @@
     const statusEl = document.querySelectorAll('.pillar .status')[3];
     if (!note || !statusEl) return;
 
-    // 日付から「その週の月曜日」を求めてグループ化する
+    // 日付から「その週の月曜日」を求めてグループ化する(タイムゾーンに左右されないようUTC基準で計算)
     function mondayOf(dateStr) {
-      const d = new Date(dateStr + 'T00:00:00+09:00');
-      const day = d.getDay(); // 0=日
+      const [y, m, dd] = dateStr.split('-').map(Number);
+      const utc = new Date(Date.UTC(y, m - 1, dd));
+      const day = utc.getUTCDay(); // 0=日
       const diff = (day === 0 ? -6 : 1 - day);
-      d.setDate(d.getDate() + diff);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      utc.setUTCDate(utc.getUTCDate() + diff);
+      return `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, '0')}-${String(utc.getUTCDate()).padStart(2, '0')}`;
     }
 
     const byWeek = {};
@@ -823,12 +836,13 @@
 
     const raceRuns = runs.filter(r => classifyRun(r.paceSec).tag === 'race');
     const items = [];
+    const raceRunsLong = raceRuns.filter(r => parseFloat(r.dist) >= 10);
 
-    // ① ペースの仕上がり具合
-    if (raceRuns.length === 0) {
-      items.push({ warn: true, html: 'レースペース走のデータがまだない。まずは意図的にレースペースで走る回を作りたい。' });
+    // ① ペースの仕上がり具合(10km以上のレースペース走のみで判定)
+    if (raceRunsLong.length === 0) {
+      items.push({ warn: true, html: '10km以上のレースペース走のデータがまだない。距離を伴った状態でのペース確認をしたい。' });
     } else {
-      const avgSec = raceRuns.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRuns.length);
+      const avgSec = raceRunsLong.slice(0, 6).reduce((s, r) => s + r.paceSec, 0) / Math.min(6, raceRunsLong.length);
       if (avgSec <= MUST_PACE_SEC) {
         items.push({ warn: false, html: `平均ペースはすでに必達ライン付近。<b>スピードの引き出しは足りている。</b>` });
       } else {
@@ -844,22 +858,43 @@
       let longest = raceRuns[0];
       raceRuns.forEach(r => { if (parseFloat(r.dist) > parseFloat(longest.dist)) longest = r; });
       const gap = (21.1 - parseFloat(longest.dist)).toFixed(1);
+
+      // 今後の予定に、現在の最長距離を超えるような練習がまだ残っているかを確認
+      const todayMidnightForDist = new Date();
+      todayMidnightForDist.setHours(0, 0, 0, 0);
+      const upcomingBigRun = PLANNED_SCHEDULE.some(p => {
+        if (p.tag === 'race') return false;
+        if (new Date(p.date + 'T00:00:00+09:00') < todayMidnightForDist) return false;
+        const m = p.label.match(/(\d+(\.\d+)?)km/);
+        return m && parseFloat(m[1]) > parseFloat(longest.dist);
+      });
+
       if (parseFloat(gap) <= 0) {
         items.push({ warn: false, html: `最長距離は<b>${longest.dist}km</b>（${longest.date}）。本番21kmを既にカバーできている。` });
+      } else if (!upcomingBigRun) {
+        items.push({ warn: false, html: `最長距離は<b>${longest.dist}km</b>（${longest.date}）。ここから先はテーパー期で距離を落とす予定なので、残り${gap}km分は本番で埋める形。` });
       } else {
         items.push({ warn: true, html: `最長距離はまだ<b>${longest.dist}km</b>（${longest.date}）。本番21kmまで、あと${gap}km分の距離耐性が課題。` });
       }
     }
 
-    // ③ 次のチェックポイント(PLANNED_SCHEDULEから今日より後の直近1件)
+    // ③ 次のチェックポイント(PLANNED_SCHEDULEから、今日以降かつ「まだ実施していない」直近1件)
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
+    const doneDateKeys = new Set(runs.map(r => {
+      // runs[].date は "M/D" 形式。今年(本番年)の日付として YYYY-MM-DD 化する
+      const [mm, dd] = r.date.split('/');
+      return `2026-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }));
     const upcoming = PLANNED_SCHEDULE
       .filter(p => new Date(p.date + 'T00:00:00+09:00') >= todayMidnight)
+      .filter(p => !doneDateKeys.has(p.date))
       .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
     if (upcoming) {
-      const d = new Date(upcoming.date + 'T00:00:00+09:00');
-      items.push({ warn: false, html: `次のチェックポイントは<b>${d.getMonth() + 1}/${d.getDate()}の${upcoming.label}</b>。ここで目標ペースを維持できるかを見る。` });
+      const [, mm, dd] = upcoming.date.split('-');
+      const isEasyDay = /ジョグ|流し|整体/.test(upcoming.label);
+      const tail = isEasyDay ? '無理せず体を整える日。' : 'ここで目標ペースを維持できるかを見る。';
+      items.push({ warn: false, html: `次のチェックポイントは<b>${parseInt(mm, 10)}/${parseInt(dd, 10)}の${upcoming.label}</b>。${tail}` });
     }
 
     container.innerHTML = items.map(it => `<div class="insight${it.warn ? ' warn' : ''}">${it.html}</div>`).join('');
