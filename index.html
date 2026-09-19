@@ -736,7 +736,93 @@
     }
   }
 
-  async function fetchStravaActivities() {
+  // 心拍の粘り:レースペース走における「平均心拍/最大心拍」の比率で判定。
+  // 比率が高いほど、心拍が乱高下せず高い強度を維持できている(=粘れている)とみなす。
+  function updateHRPillar(runs) {
+    const note = document.querySelectorAll('.pillar .note')[2];
+    const statusEl = document.querySelectorAll('.pillar .status')[2];
+    if (!note || !statusEl) return;
+
+    const raceRunsWithHr = runs.filter(r => classifyRun(r.paceSec).tag === 'race' && r.avgHr && r.maxHr);
+
+    if (raceRunsWithHr.length < 2) {
+      statusEl.innerHTML = '<span class="dot watch"></span>データ収集中';
+      note.textContent = `レースペース走での心拍データが${raceRunsWithHr.length}件。判定には2件以上必要`;
+      return;
+    }
+
+    const avgRatio = raceRunsWithHr.reduce((s, r) => s + (r.avgHr / r.maxHr), 0) / raceRunsWithHr.length;
+    const pct = (avgRatio * 100).toFixed(1);
+    const avgMax = Math.round(raceRunsWithHr.reduce((s, r) => s + r.maxHr, 0) / raceRunsWithHr.length);
+
+    if (avgRatio >= 0.93) {
+      statusEl.innerHTML = '<span class="dot ok"></span>安定';
+      note.textContent = `レースペース走${raceRunsWithHr.length}回で平均心拍が最大心拍の${pct}%(平均最大${avgMax}bpm)。乱高下少なく粘れている`;
+    } else if (avgRatio >= 0.88) {
+      statusEl.innerHTML = '<span class="dot watch"></span>やや波あり';
+      note.textContent = `レースペース走${raceRunsWithHr.length}回で平均心拍が最大心拍の${pct}%。序盤や終盤にスパイクが出ている可能性`;
+    } else {
+      statusEl.innerHTML = '<span class="dot warn"></span>要強化';
+      note.textContent = `レースペース走${raceRunsWithHr.length}回で平均心拍が最大心拍の${pct}%。心拍の波が大きく、粘りに課題あり`;
+    }
+  }
+
+  // 負荷管理:直近の週間走行距離を、その前の週と比較。
+  // 増加が目安10%を超えていないかを見る(怪我予防の一般的な目安)。
+  function updateLoadPillar(scheduleRuns) {
+    const note = document.querySelectorAll('.pillar .note')[3];
+    const statusEl = document.querySelectorAll('.pillar .status')[3];
+    if (!note || !statusEl) return;
+
+    // 日付から「その週の月曜日」を求めてグループ化する
+    function mondayOf(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00+09:00');
+      const day = d.getDay(); // 0=日
+      const diff = (day === 0 ? -6 : 1 - day);
+      d.setDate(d.getDate() + diff);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    const byWeek = {};
+    scheduleRuns.forEach(r => {
+      const wk = mondayOf(r.dateKey);
+      byWeek[wk] = (byWeek[wk] || 0) + r.dist;
+    });
+
+    const weeks = Object.keys(byWeek).sort();
+    if (weeks.length < 2) {
+      statusEl.innerHTML = '<span class="dot watch"></span>データ収集中';
+      note.textContent = '週単位の比較には、あと数週間分のデータが必要';
+      return;
+    }
+
+    // 直近の週は走行途中で距離が少なく出やすいため、直近の「完了した」週同士で比較する
+    const lastWeek = weeks[weeks.length - 2];
+    const prevWeek = weeks[weeks.length - 3] || weeks[weeks.length - 2];
+    const lastDist = byWeek[weeks[weeks.length - 1]];
+    const completedLast = byWeek[lastWeek];
+    const completedPrev = weeks.length >= 3 ? byWeek[prevWeek] : null;
+
+    if (completedPrev === null || completedPrev === 0) {
+      statusEl.innerHTML = '<span class="dot watch"></span>データ収集中';
+      note.textContent = `直近週${completedLast.toFixed(1)}km(今週進行中${lastDist.toFixed(1)}km)。比較には前週データが必要`;
+      return;
+    }
+
+    const changePct = ((completedLast - completedPrev) / completedPrev) * 100;
+    const sign = changePct >= 0 ? '+' : '';
+
+    if (changePct <= 10) {
+      statusEl.innerHTML = '<span class="dot ok"></span>安全域';
+      note.textContent = `週間距離は前週比${sign}${changePct.toFixed(0)}%(${completedPrev.toFixed(1)}→${completedLast.toFixed(1)}km)。目安10%以内で推移中`;
+    } else if (changePct <= 20) {
+      statusEl.innerHTML = '<span class="dot watch"></span>やや急増';
+      note.textContent = `週間距離は前週比${sign}${changePct.toFixed(0)}%(${completedPrev.toFixed(1)}→${completedLast.toFixed(1)}km)。目安10%を超えて増加中`;
+    } else {
+      statusEl.innerHTML = '<span class="dot warn"></span>要注意';
+      note.textContent = `週間距離は前週比${sign}${changePct.toFixed(0)}%(${completedPrev.toFixed(1)}→${completedLast.toFixed(1)}km)。急激な増加は怪我リスク増`;
+    }
+  }
     const list = document.getElementById('runs');
     try {
       const tokenRes = await fetch('https://www.strava.com/oauth/token', {
@@ -765,18 +851,22 @@
           return {
             date: `${d.getMonth() + 1}/${d.getDate()}`,
             dist: (a.distance / 1000).toFixed(2),
-            paceSec: a.moving_time / (a.distance / 1000)
+            paceSec: a.moving_time / (a.distance / 1000),
+            avgHr: a.average_heartrate || null,
+            maxHr: a.max_heartrate || null
           };
         });
 
       renderRuns(runs.map(r => ({ ...r, dist: r.dist + 'km' })));
       updateInsights(runs);
+      updateHRPillar(runs);
 
       // 同じアクセストークンでスケジュールタブ用の履歴データも取得
       try {
         const scheduleRuns = await fetchRunsForSchedule(tokenData.access_token);
         buildScheduleRows(scheduleRuns);
         updateProgressSummary(scheduleRuns);
+        updateLoadPillar(scheduleRuns);
       } catch (schedErr) {
         console.error(schedErr);
         document.getElementById('schedule-container').innerHTML = '<div class="cond-empty">スケジュールデータの取得に失敗しました。時間をおいて再読み込みしてください。</div>';
