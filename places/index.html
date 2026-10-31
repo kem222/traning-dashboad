@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#FBF6F0">
+<title>ふたりの行きたいところ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #FBF6F0;
+    --surface: #FFFFFF;
+    --surface-2: #F4EDE4;
+    --border: #E8DED2;
+    --text: #2B2420;
+    --muted: #8A7E74;
+    --faint: #B9AEA3;
+    --accent: #E06C5A;
+    --accent-ink: #FFFFFF;
+    --trip: #7A68E6;
+    --outing: #2A9D7F;
+    --date: #E06C5A;
+    --shadow: 0 1px 2px rgba(60,40,20,.06), 0 4px 16px rgba(60,40,20,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1A1614;
+      --surface: #241F1C;
+      --surface-2: #2E2824;
+      --border: #3A332E;
+      --text: #F1E9E1;
+      --muted: #A89B90;
+      --faint: #6D625A;
+      --accent: #F08470;
+      --accent-ink: #1A1614;
+      --trip: #9D8EF5;
+      --outing: #4CC3A2;
+      --date: #F08470;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: none; background: none; }
+  a { color: inherit; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+
+  header { padding: 22px 0 10px; display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 20px; font-weight: 800; letter-spacing: .01em; flex: 1; }
+  header h1 small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+    background: var(--surface); border: 1px solid var(--border); font-size: 18px;
+  }
+  .mode-badge { font-size: 11px; color: var(--muted); background: var(--surface-2); border-radius: 999px; padding: 2px 8px; }
+
+  /* quick add */
+  .add-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    padding: 12px; box-shadow: var(--shadow); margin-top: 6px;
+  }
+  .add-row { display: flex; gap: 8px; }
+  .add-row textarea {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent; resize: none;
+    padding: 8px 6px; font-size: 16px; line-height: 1.4; height: 40px; max-height: 120px;
+  }
+  .add-row textarea::placeholder { color: var(--faint); }
+  .btn-primary {
+    background: var(--accent); color: var(--accent-ink); font-weight: 700; border-radius: 12px;
+    padding: 0 16px; height: 40px; flex-shrink: 0; white-space: nowrap;
+  }
+  .btn-primary:disabled { opacity: .5; }
+  .size-pick { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .chip {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+    padding: 5px 12px; font-size: 13px; color: var(--muted); white-space: nowrap;
+  }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .size-pick .chip[aria-pressed="true"][data-size="trip"] { background: var(--trip); border-color: var(--trip); color: #fff; }
+  .size-pick .chip[aria-pressed="true"][data-size="outing"] { background: var(--outing); border-color: var(--outing); color: #fff; }
+  .size-pick .chip[aria-pressed="true"][data-size="date"] { background: var(--date); border-color: var(--date); color: #fff; }
+  .add-hint { font-size: 12px; color: var(--faint); margin-top: 8px; padding: 0 4px; }
+
+  /* tabs */
+  .tabs {
+    position: sticky; top: 0; z-index: 500; background: var(--bg);
+    display: flex; gap: 4px; padding: 14px 0 10px; margin-top: 4px;
+  }
+  .tab {
+    flex: 1; padding: 9px 0; border-radius: 12px; font-weight: 700; font-size: 14px; color: var(--muted);
+    background: var(--surface-2);
+  }
+  .tab[aria-selected="true"] { background: var(--text); color: var(--bg); }
+  .tab .n { font-weight: 500; font-size: 12px; opacity: .75; margin-left: 2px; }
+
+  .filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .filters::-webkit-scrollbar { display: none; }
+  .search {
+    margin-top: 8px; width: 100%; border: 1px solid var(--border); background: var(--surface);
+    border-radius: 12px; padding: 9px 12px; font-size: 15px; outline: none;
+  }
+
+  /* list */
+  .group { margin-top: 22px; }
+  .group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .group-head .t { font-weight: 800; font-size: 16px; }
+  .group-head .s { font-size: 12px; color: var(--muted); }
+  .group-head .c { margin-left: auto; font-size: 12px; color: var(--faint); }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 12px; box-shadow: var(--shadow);
+  }
+  .card .emo {
+    width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; display: grid; place-items: center;
+    font-size: 20px; background: var(--surface-2);
+  }
+  .card[data-size="trip"] .emo { background: color-mix(in srgb, var(--trip) 16%, transparent); }
+  .card[data-size="outing"] .emo { background: color-mix(in srgb, var(--outing) 16%, transparent); }
+  .card[data-size="date"] .emo { background: color-mix(in srgb, var(--date) 16%, transparent); }
+  .card .body { flex: 1; min-width: 0; }
+  .card .title { font-weight: 700; overflow-wrap: anywhere; }
+  .card .meta { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 0 10px; }
+  .card .memo { font-size: 13px; color: var(--muted); margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .card .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .mini {
+    font-size: 12px; padding: 5px 10px; border-radius: 999px; background: var(--surface-2);
+    color: var(--text); text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .mini.go { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .nopin { color: var(--accent); }
+  .empty { text-align: center; color: var(--muted); padding: 48px 16px; font-size: 14px; }
+  .empty b { display: block; font-size: 32px; margin-bottom: 8px; }
+
+  /* map */
+  #map { height: calc(100vh - 230px); min-height: 360px; border-radius: 16px; border: 1px solid var(--border); margin-top: 10px; z-index: 1; }
+  .pin {
+    width: 34px; height: 34px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+    display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3);
+  }
+  .pin span { transform: rotate(45deg); font-size: 16px; }
+  .pin.done { filter: grayscale(1); opacity: .7; }
+  .leaflet-popup-content { margin: 12px 14px; font-family: inherit; }
+  .pop-t { font-weight: 700; font-size: 14px; }
+  .pop-m { font-size: 12px; color: #777; margin: 2px 0 8px; }
+  .pop-a { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pop-a a, .pop-a button { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #F1EAE2; color: #2B2420; text-decoration: none; }
+  .map-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  /* sheet */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1000; display: none; }
+  .sheet-bg.open { display: block; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1001; background: var(--bg);
+    border-radius: 20px 20px 0 0; max-height: 92vh; overflow-y: auto;
+    padding: 8px 16px calc(24px + env(safe-area-inset-bottom)); transform: translateY(100%);
+    transition: transform .22s ease, visibility .22s; max-width: 560px; margin: 0 auto; visibility: hidden;
+  }
+  .sheet.open { transform: none; visibility: visible; }
+  .sheet .grip { width: 40px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 12px; }
+  .sheet h2 { font-size: 17px; margin-bottom: 12px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field textarea, .field select {
+    width: 100%; border: 1px solid var(--border); background: var(--surface); border-radius: 12px;
+    padding: 10px 12px; font-size: 16px; outline: none;
+  }
+  .field textarea { min-height: 70px; resize: vertical; }
+  .row2 { display: flex; gap: 8px; }
+  .row2 > * { flex: 1; min-width: 0; }
+  #pickMap { height: 220px; border-radius: 12px; border: 1px solid var(--border); }
+  .sheet-actions { display: flex; gap: 8px; margin-top: 16px; }
+  .btn { flex: 1; height: 44px; border-radius: 12px; font-weight: 700; background: var(--surface-2); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.danger { color: #C0392B; flex: 0 0 auto; padding: 0 16px; }
+  .help { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .help code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; word-break: break-all; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 14px;
+    opacity: 0; transition: .2s; z-index: 2000; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 32px);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  .loading { text-align: center; padding: 30px; color: var(--faint); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ふたりの行きたいところ<small id="subtitle">思いついたら、すぐメモ。</small></h1>
+    <button class="icon-btn" id="btnSettings" aria-label="設定">⚙︎</button>
+  </header>
+
+  <form class="add-card" id="addForm" autocomplete="off">
+    <div class="add-row">
+      <textarea id="addText" rows="1" placeholder="どこ行きたい？（店名・URLでもOK）"></textarea>
+      <button class="btn-primary" id="addBtn" type="submit">追加</button>
+    </div>
+    <div class="size-pick" id="addSize">
+      <button type="button" class="chip" data-size="" aria-pressed="true">おまかせ</button>
+      <button type="button" class="chip" data-size="trip" aria-pressed="false">🧳 旅行</button>
+      <button type="button" class="chip" data-size="outing" aria-pressed="false">🚗 おでかけ</button>
+      <button type="button" class="chip" data-size="date" aria-pressed="false">☕ デート</button>
+    </div>
+    <div class="add-hint">2行目以降はメモになります。場所は名前から自動で地図にのせます。</div>
+  </form>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="list" aria-selected="true">行きたい<span class="n" id="nWant"></span></button>
+    <button class="tab" role="tab" data-view="map" aria-selected="false">地図</button>
+    <button class="tab" role="tab" data-view="done" aria-selected="false">行った<span class="n" id="nDone"></span></button>
+  </nav>
+
+  <div class="filters" id="filters">
+    <button class="chip" data-f="all" aria-pressed="true">すべて</button>
+    <button class="chip" data-f="trip" aria-pressed="false">🧳 旅行</button>
+    <button class="chip" data-f="outing" aria-pressed="false">🚗 おでかけ</button>
+    <button class="chip" data-f="date" aria-pressed="false">☕ デート</button>
+    <button class="chip" data-f="near" aria-pressed="false">📍 近い順</button>
+  </div>
+  <input class="search" id="search" type="search" placeholder="検索（名前・エリア・メモ）">
+
+  <main id="view"><div class="loading">読み込み中…</div></main>
+  <div id="mapWrap" hidden>
+    <div id="map"></div>
+    <div class="map-note" id="mapNote"></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheetBody"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ═════════════ config ═════════════ */
+const SIZES = {
+  trip:   { label: '旅行',     sub: '泊まりで行きたい', emoji: '🧳', color: 'var(--trip)',   hex: '#7A68E6' },
+  outing: { label: 'おでかけ', sub: '日帰りで行きたい', emoji: '🚗', color: 'var(--outing)', hex: '#2A9D7F' },
+  date:   { label: 'デート',   sub: 'カフェ・ごはん',   emoji: '☕', color: 'var(--date)',   hex: '#E06C5A' },
+};
+const ORDER = ['trip', 'outing', 'date'];
+const LS = { cfg: 'places.cfg', items: 'places.items', view: 'places.view' };
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// 設定リンク (#setup=...) で開かれたら保存
+(function importSetup() {
+  const m = location.hash.match(/setup=([^&]+)/);
+  if (!m) return;
+  try {
+    const cfg = JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(m[1])))));
+    store.set(LS.cfg, { ...store.get(LS.cfg, {}), ...cfg });
+    history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(() => toast('共有の設定を読み込みました'), 300);
+  } catch (e) { console.warn(e); }
+})();
+
+let cfg = store.get(LS.cfg, {});
+const remote = () => !!(cfg.api && cfg.token);
+
+/* ═════════════ helpers ═════════════ */
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const today = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+const fmtDate = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? String(s) : `${d.getMonth() + 1}/${d.getDate()}`; };
+const hasPin = i => i.lat != null && i.lng != null && i.lat !== '' && isFinite(i.lat);
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+function guessSize(text) {
+  const t = String(text || '');
+  if (/旅行|泊|ホテル|旅館|民宿|お宿|の宿|宿$|温泉|リゾート|グランピング|コテージ|ヴィラ|海外|離島/.test(t)) return 'trip';
+  if (/カフェ|喫茶|cafe|coffee|コーヒー|珈琲|ランチ|ディナー|モーニング|レストラン|居酒屋|バー|ご飯|ごはん|パン|ベーカリー|スイーツ|ケーキ|パフェ|寿司|焼肉|ラーメン|ビストロ|食堂|酒場|鮨|そば|うどん|カレー|ピザ/i.test(t)) return 'date';
+  if (/水族館|動物園|遊園地|テーマパーク|美術館|博物館|公園|ドライブ|展望|花火|祭|紅葉|花見|ライブ|フェス|植物園|牧場|アウトレット|海水浴|ビーチ|登山|ハイキング|滝|展示|イルミネーション/.test(t)) return 'outing';
+  return 'date';
+}
+
+function parseInput(text) {
+  const out = { title: '', url: '', memo: '' };
+  let t = text.trim();
+  const u = t.match(/https?:\/\/[^\s　]+/);
+  if (u) { out.url = u[0]; t = t.replace(u[0], ' '); }
+  const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
+  out.title = lines.shift() || '';
+  out.memo = lines.join('\n');
+  return out;
+}
+
+function parseMapsUrlLocal(url) {
+  const out = {};
+  const place = url.match(/\/place\/([^/@?]+)/);
+  if (place) out.title = decodeURIComponent(place[1].replace(/\+/g, ' '));
+  const c = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || url.match(/[?&](?:q|query|ll)=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/) || url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (c) { out.lat = +c[1]; out.lng = +c[2]; }
+  return out;
+}
+
+function mapsHref(i) {
+  if (i.url && /google\.[^/]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps/.test(i.url)) return i.url;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(i.title + (i.area ? ' ' + i.area : ''))}`;
+}
+
+/* ═════════════ data layer ═════════════ */
+async function nominatim(q) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ja&countrycodes=jp&addressdetails=1&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (!j[0]) return null;
+    const a = j[0].address || {};
+    return { lat: +j[0].lat, lng: +j[0].lon, area: (a.province || a.state || '') + (a.city || a.town || a.village || '') };
+  } catch { return null; }
+}
+
+const api = {
+  async call(body) {
+    const r = await fetch(cfg.api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: cfg.token, ...body }) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'error');
+    return j;
+  },
+  async list() {
+    if (!remote()) return store.get(LS.items, []);
+    const r = await fetch(`${cfg.api}?token=${encodeURIComponent(cfg.token)}`);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'error');
+    return j.items;
+  },
+  async add(item) {
+    if (remote()) return (await api.call({ action: 'add', item })).item;
+    const it = {
+      id: Math.random().toString(36).slice(2, 10), status: 'want', createdAt: new Date().toISOString(),
+      visitedAt: '', visitedMemo: '', source: 'web', area: '', lat: null, lng: null, ...item,
+    };
+    if (it.url && /google\.[^/]+\/maps/.test(it.url)) Object.assign(it, { ...parseMapsUrlLocal(it.url), ...(it.title ? { title: it.title } : {}) });
+    if (!it.title) it.title = it.url || '（名前なし）';
+    if (!it.size) it.size = guessSize(`${it.title} ${it.memo}`);
+    if (!hasPin(it)) { const g = await nominatim(it.title); if (g) Object.assign(it, { lat: g.lat, lng: g.lng, area: it.area || g.area }); }
+    const all = store.get(LS.items, []); all.push(it); store.set(LS.items, all);
+    return it;
+  },
+  async update(id, patch) {
+    if (remote()) return (await api.call({ action: 'update', id, patch })).item;
+    const all = store.get(LS.items, []); const i = all.findIndex(x => x.id === id);
+    if (i >= 0) { all[i] = { ...all[i], ...patch }; store.set(LS.items, all); return all[i]; }
+  },
+  async remove(id) {
+    if (remote()) return api.call({ action: 'delete', id });
+    store.set(LS.items, store.get(LS.items, []).filter(x => x.id !== id));
+  },
+  async geocode(q) {
+    if (remote()) return (await api.call({ action: 'geocode', q })).result;
+    return nominatim(q);
+  },
+};
+
+/* ═════════════ state & render ═════════════ */
+let items = [];
+let view = store.get(LS.view, 'list');
+let filter = 'all';
+let query = '';
+let here = null;
+
+function distKm(a, b) {
+  const R = 6371, r = x => x * Math.PI / 180;
+  const dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function filtered(status) {
+  const q = query.trim().toLowerCase();
+  return items.filter(i => (status === 'done' ? i.status === 'done' : i.status !== 'done'))
+    .filter(i => filter === 'all' || filter === 'near' || (i.size || 'date') === filter)
+    .filter(i => !q || `${i.title} ${i.area} ${i.memo} ${i.addedBy}`.toLowerCase().includes(q));
+}
+
+function cardHTML(i) {
+  const s = SIZES[i.size] || SIZES.date;
+  const done = i.status === 'done';
+  const meta = [
+    i.area ? `📍${esc(i.area)}` : '',
+    !hasPin(i) ? `<span class="nopin">地図未設定</span>` : '',
+    here && hasPin(i) ? `${distKm(here, i).toFixed(distKm(here, i) < 10 ? 1 : 0)}km` : '',
+    done ? `${esc(i.visitedAt || '')} に行った` : `${fmtDate(i.createdAt)}${i.addedBy ? ' · ' + esc(i.addedBy) : ''}${i.source === 'line' ? ' · LINE' : ''}`,
+  ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
+  const memo = done && i.visitedMemo ? `💬 ${i.visitedMemo}` : i.memo;
+  return `<article class="card" data-size="${esc(i.size || 'date')}">
+    <div class="emo">${s.emoji}</div>
+    <div class="body">
+      <div class="title">${esc(i.title)}</div>
+      <div class="meta">${meta}</div>
+      ${memo ? `<div class="memo">${esc(memo)}</div>` : ''}
+      <div class="actions">
+        ${done ? '' : `<button class="mini go" data-act="done" data-id="${esc(i.id)}">行った！</button>`}
+        <a class="mini" href="${esc(mapsHref(i))}" target="_blank" rel="noopener">🗺 マップ</a>
+        ${i.url && !/google\.[^/]+\/maps|goo\.gl/.test(i.url) ? `<a class="mini" href="${esc(i.url)}" target="_blank" rel="noopener">🔗 サイト</a>` : ''}
+        ${hasPin(i) ? `<button class="mini" data-act="locate" data-id="${esc(i.id)}">📌 地図で見る</button>` : ''}
+        <button class="mini" data-act="edit" data-id="${esc(i.id)}">編集</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+function render() {
+  $('#nWant').textContent = items.filter(i => i.status !== 'done').length || '';
+  $('#nDone').textContent = items.filter(i => i.status === 'done').length || '';
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === view)));
+  document.querySelectorAll('#filters .chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === filter)));
+  $('#subtitle').innerHTML = remote() ? 'ふたりで共有中' : '<span class="mode-badge">この端末だけに保存中 · ⚙︎ から共有設定</span>';
+
+  const isMap = view === 'map';
+  $('#mapWrap').hidden = !isMap;
+  $('#view').hidden = isMap;
+  if (isMap) { renderMap(); return; }
+
+  let list = filtered(view === 'done' ? 'done' : 'want');
+  const el = $('#view');
+  if (!list.length) {
+    el.innerHTML = view === 'done'
+      ? `<div class="empty"><b>🎈</b>行ったところはまだありません。<br>行ったら「行った！」を押そう。</div>`
+      : `<div class="empty"><b>🗺</b>${query || filter !== 'all' ? '該当なし' : 'まだ何もありません。<br>上のボックスか LINE から追加してね。'}</div>`;
+    return;
+  }
+
+  if (view === 'done') {
+    list.sort((a, b) => String(b.visitedAt).localeCompare(String(a.visitedAt)));
+    el.innerHTML = `<div class="group">${list.map(cardHTML).join('')}</div>`;
+    return;
+  }
+  if (filter === 'near' && here) {
+    list.sort((a, b) => (hasPin(a) ? distKm(here, a) : 1e9) - (hasPin(b) ? distKm(here, b) : 1e9));
+    el.innerHTML = `<div class="group">${list.map(cardHTML).join('')}</div>`;
+    return;
+  }
+  list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  el.innerHTML = ORDER.map(sz => {
+    const g = list.filter(i => (i.size || 'date') === sz);
+    if (!g.length) return '';
+    const s = SIZES[sz];
+    return `<section class="group"><div class="group-head"><span class="t">${s.emoji} ${s.label}</span><span class="s">${s.sub}</span><span class="c">${g.length}件</span></div>${g.map(cardHTML).join('')}</section>`;
+  }).join('');
+}
+
+/* ═════════════ map ═════════════ */
+let map, layer, pendingFocus = null;
+const pinIcon = (i) => L.divIcon({
+  className: '', iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -30],
+  html: `<div class="pin ${i.status === 'done' ? 'done' : ''}" style="background:${(SIZES[i.size] || SIZES.date).hex}"><span>${(SIZES[i.size] || SIZES.date).emoji}</span></div>`,
+});
+
+function renderMap() {
+  if (!window.L) { $('#mapNote').textContent = '地図を読み込めませんでした（通信を確認してね）'; return; }
+  if (!map) {
+    map = L.map('map', { zoomControl: false }).setView([35.68, 139.76], 10);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    layer = L.layerGroup().addTo(map);
+  }
+  setTimeout(() => map.invalidateSize(), 0);
+  layer.clearLayers();
+  const want = filtered('want');
+  const pins = want.filter(hasPin);
+  const markers = {};
+  pins.forEach(i => {
+    const m = L.marker([i.lat, i.lng], { icon: pinIcon(i) }).addTo(layer);
+    m.bindPopup(`<div class="pop-t">${esc(i.title)}</div><div class="pop-m">${esc(i.area || '')}${i.memo ? ' · ' + esc(i.memo.slice(0, 40)) : ''}</div>
+      <div class="pop-a"><a href="${esc(mapsHref(i))}" target="_blank" rel="noopener">Googleマップ</a>${i.url && !/google|goo\.gl/.test(i.url) ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">サイト</a>` : ''}<button data-act="edit" data-id="${esc(i.id)}">編集</button></div>`);
+    markers[i.id] = m;
+  });
+  if (here) L.circleMarker([here.lat, here.lng], { radius: 7, color: '#fff', weight: 2, fillColor: '#3B82F6', fillOpacity: 1 }).addTo(layer);
+  const missing = want.length - pins.length;
+  $('#mapNote').textContent = `${pins.length}件を表示中` + (missing ? `（地図未設定 ${missing}件は「編集」から位置を指定できます）` : '');
+
+  if (pendingFocus && markers[pendingFocus]) {
+    const m = markers[pendingFocus];
+    setTimeout(() => { map.setView(m.getLatLng(), 15); m.openPopup(); }, 50);
+    pendingFocus = null;
+  } else if (pins.length && !renderMap._fitted) {
+    map.fitBounds(L.latLngBounds(pins.map(i => [i.lat, i.lng])).pad(0.2), { maxZoom: 13 });
+    renderMap._fitted = true;
+  }
+}
+
+/* ═════════════ sheet (edit / settings) ═════════════ */
+let pickMap = null;
+function openSheet(html) {
+  $('#sheetBody').innerHTML = html;
+  $('#sheetBg').classList.add('open');
+  requestAnimationFrame(() => $('#sheet').classList.add('open'));
+}
+function closeSheet() {
+  $('#sheet').classList.remove('open'); $('#sheetBg').classList.remove('open');
+  if (pickMap) { pickMap.remove(); pickMap = null; }
+}
+$('#sheetBg').onclick = closeSheet;
+
+function openEdit(id) {
+  const i = items.find(x => x.id === id); if (!i) return;
+  const done = i.status === 'done';
+  openSheet(`<h2>編集</h2>
+    <div class="field"><label>名前</label><input id="eTitle" value="${esc(i.title)}"></div>
+    <div class="field"><label>大きさ</label><div class="size-pick" id="eSize">
+      ${ORDER.map(k => `<button type="button" class="chip" data-size="${k}" aria-pressed="${(i.size || 'date') === k}">${SIZES[k].emoji} ${SIZES[k].label}</button>`).join('')}
+    </div></div>
+    <div class="row2">
+      <div class="field"><label>エリア</label><input id="eArea" value="${esc(i.area)}" placeholder="例）神奈川県箱根町"></div>
+    </div>
+    <div class="field"><label>URL（お店のサイト・Instagram・食べログなど）</label><input id="eUrl" type="url" value="${esc(i.url)}"></div>
+    <div class="field"><label>メモ</label><textarea id="eMemo">${esc(i.memo)}</textarea></div>
+    <div class="field"><label>場所（地図をタップでピンを移動）</label>
+      <div class="row2" style="margin-bottom:6px"><input id="eGeoQ" placeholder="住所や店名で検索" value="${esc(i.title)}" style="border:1px solid var(--border);background:var(--surface);border-radius:12px;padding:8px 12px"><button class="mini" id="eGeoBtn" type="button" style="flex:0 0 auto">検索</button></div>
+      <div id="pickMap"></div>
+    </div>
+    ${done ? `<div class="row2"><div class="field"><label>行った日</label><input id="eVisited" type="date" value="${esc(String(i.visitedAt).slice(0, 10))}"></div></div>
+    <div class="field"><label>行ってみてどうだった？</label><textarea id="eVMemo">${esc(i.visitedMemo)}</textarea></div>` : ''}
+    <div class="sheet-actions">
+      <button class="btn danger" id="eDel">削除</button>
+      ${done ? `<button class="btn" id="eUndo">行きたいに戻す</button>` : ''}
+      <button class="btn primary" id="eSave">保存</button>
+    </div>`);
+
+  let pos = hasPin(i) ? { lat: +i.lat, lng: +i.lng } : null;
+  let size = i.size || 'date';
+  $('#eSize').onclick = e => {
+    const b = e.target.closest('.chip'); if (!b) return; size = b.dataset.size;
+    $('#eSize').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+  };
+  setTimeout(() => {
+    if (!window.L) return;
+    pickMap = L.map('pickMap').setView(pos ? [pos.lat, pos.lng] : [35.68, 139.76], pos ? 15 : 9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OSM' }).addTo(pickMap);
+    const icon = () => pinIcon({ size, status: 'want' });
+    let mk = pos ? L.marker([pos.lat, pos.lng], { icon: icon() }).addTo(pickMap) : null;
+    const setPos = (lat, lng, zoom) => {
+      pos = { lat, lng };
+      if (mk) mk.setLatLng([lat, lng]); else mk = L.marker([lat, lng], { icon: icon() }).addTo(pickMap);
+      if (zoom) pickMap.setView([lat, lng], zoom);
+    };
+    pickMap.on('click', e => setPos(e.latlng.lat, e.latlng.lng));
+    $('#eGeoBtn').onclick = async () => {
+      $('#eGeoBtn').textContent = '…';
+      try {
+        const g = await api.geocode($('#eGeoQ').value);
+        if (g) { setPos(g.lat, g.lng, 15); if (!$('#eArea').value && g.area) $('#eArea').value = g.area; }
+        else toast('見つからなかった… 地図をタップして指定してね');
+      } catch (e) { toast('検索に失敗しました'); }
+      $('#eGeoBtn').textContent = '検索';
+    };
+  }, 250);
+
+  $('#eSave').onclick = async () => {
+    const patch = {
+      title: $('#eTitle').value.trim() || i.title, size, area: $('#eArea').value.trim(),
+      url: $('#eUrl').value.trim(), memo: $('#eMemo').value.trim(),
+      lat: pos ? pos.lat : '', lng: pos ? pos.lng : '',
+    };
+    if (done) { patch.visitedAt = $('#eVisited').value; patch.visitedMemo = $('#eVMemo').value.trim(); }
+    await mutate(id, patch, '保存しました'); closeSheet();
+  };
+  $('#eDel').onclick = async () => {
+    if (!confirm(`「${i.title}」を削除しますか？`)) return;
+    items = items.filter(x => x.id !== id); render(); closeSheet();
+    try { await api.remove(id); toast('削除しました'); } catch (e) { toast('削除に失敗しました'); load(); }
+  };
+  if (done) $('#eUndo').onclick = async () => { await mutate(id, { status: 'want', visitedAt: '' }, '行きたいリストに戻しました'); closeSheet(); };
+}
+
+function openDone(id) {
+  const i = items.find(x => x.id === id); if (!i) return;
+  openSheet(`<h2>🎉 ${esc(i.title)} に行った！</h2>
+    <div class="field"><label>行った日</label><input id="dDate" type="date" value="${today()}"></div>
+    <div class="field"><label>ひとこと（任意）</label><textarea id="dMemo" placeholder="また行きたい！ / 〇〇が美味しかった"></textarea></div>
+    <div class="sheet-actions"><button class="btn" id="dCancel">やめる</button><button class="btn primary" id="dOk">行ったリストへ</button></div>`);
+  $('#dCancel').onclick = closeSheet;
+  $('#dOk').onclick = async () => {
+    await mutate(id, { status: 'done', visitedAt: $('#dDate').value, visitedMemo: $('#dMemo').value.trim() }, '行ったリストに移しました 🎉');
+    closeSheet();
+  };
+}
+
+function openSettings() {
+  const share = cfg.api && cfg.token
+    ? `${location.origin}${location.pathname}#setup=${encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify({ api: cfg.api, token: cfg.token })))))}`
+    : '';
+  openSheet(`<h2>設定</h2>
+    <div class="field"><label>あなたの名前（追加した人として表示）</label><input id="sName" value="${esc(cfg.name || '')}" placeholder="例）けい"></div>
+    <div class="field"><label>共有用 API URL（Google Apps Script の ウェブアプリURL）</label><input id="sApi" value="${esc(cfg.api || '')}" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <div class="field"><label>合言葉（APP_TOKEN）</label><input id="sToken" value="${esc(cfg.token || '')}"></div>
+    <p class="help">空のままだと、この端末の中だけに保存されます。ふたりで共有＆LINEから追加するには、<code>places/README.md</code> の手順でスプレッドシートとLINE Botを用意してください。</p>
+    ${share ? `<div class="field" style="margin-top:14px"><label>パートナー用の設定リンク（LINEで送ってタップするだけ）</label><input id="sShare" readonly value="${esc(share)}"></div>
+      <button class="mini" id="sCopy" type="button">リンクをコピー</button>` : ''}
+    ${!remote() && items.length ? `<p class="help" style="margin-top:14px">共有設定を保存すると、この端末に保存済みの ${items.length} 件を共有先にコピーするか聞きます。</p>` : ''}
+    <div class="sheet-actions"><button class="btn" id="sClose">閉じる</button><button class="btn primary" id="sSave">保存</button></div>`);
+  $('#sClose').onclick = closeSheet;
+  if (share) $('#sCopy').onclick = async () => { try { await navigator.clipboard.writeText(share); toast('コピーしました'); } catch { $('#sShare').select(); } };
+  $('#sSave').onclick = async () => {
+    const wasLocal = !remote();
+    const localItems = store.get(LS.items, []);
+    cfg = { ...cfg, name: $('#sName').value.trim(), api: $('#sApi').value.trim(), token: $('#sToken').value.trim() };
+    store.set(LS.cfg, cfg);
+    closeSheet();
+    if (wasLocal && remote() && localItems.length && confirm(`この端末の ${localItems.length} 件を共有リストにコピーしますか？`)) {
+      for (const it of localItems) { try { await api.add({ ...it, id: undefined }); } catch {} }
+      toast('コピーしました');
+    }
+    load();
+  };
+}
+
+/* ═════════════ actions ═════════════ */
+async function mutate(id, patch, msg) {
+  const idx = items.findIndex(x => x.id === id);
+  const prev = items[idx];
+  items[idx] = { ...prev, ...patch }; render();
+  try { await api.update(id, patch); if (msg) toast(msg); }
+  catch (e) { items[idx] = prev; render(); toast('保存に失敗しました'); }
+}
+
+async function load() {
+  try {
+    items = await api.list();
+    items.forEach(i => { if (i.lat === '') i.lat = null; if (i.lng === '') i.lng = null; });
+  } catch (e) {
+    console.error(e);
+    $('#view').innerHTML = `<div class="empty"><b>⚠️</b>読み込めませんでした。<br>⚙︎ の API URL と合言葉を確認してね。</div>`;
+    return;
+  }
+  render();
+}
+
+let addSize = '';
+$('#addSize').onclick = e => {
+  const b = e.target.closest('.chip'); if (!b) return; addSize = b.dataset.size;
+  $('#addSize').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+};
+const ta = $('#addText');
+ta.addEventListener('input', () => { ta.style.height = '40px'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; });
+ta.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#addForm').requestSubmit(); }
+});
+$('#addForm').onsubmit = async e => {
+  e.preventDefault();
+  const text = ta.value.trim(); if (!text) return;
+  const p = parseInput(text);
+  const btn = $('#addBtn'); btn.disabled = true; btn.textContent = '…';
+  try {
+    const it = await api.add({ ...p, size: addSize, addedBy: cfg.name || '' });
+    items.push(it);
+    ta.value = ''; ta.style.height = '40px';
+    if (view === 'done') view = 'list';
+    render();
+    const s = SIZES[it.size] || SIZES.date;
+    toast(`${s.emoji} ${it.title} を追加` + (hasPin(it) ? '' : '（地図は未設定）'));
+  } catch (err) { toast('追加に失敗しました'); console.error(err); }
+  btn.disabled = false; btn.textContent = '追加';
+};
+
+document.querySelector('.tabs').onclick = e => {
+  const t = e.target.closest('.tab'); if (!t) return;
+  view = t.dataset.view; store.set(LS.view, view); render();
+};
+$('#filters').onclick = e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  filter = c.dataset.f;
+  if (filter === 'near' && !here) {
+    if (!navigator.geolocation) { toast('位置情報が使えません'); filter = 'all'; return render(); }
+    toast('現在地を取得中…');
+    navigator.geolocation.getCurrentPosition(
+      p => { here = { lat: p.coords.latitude, lng: p.coords.longitude }; render(); if (map) map.setView([here.lat, here.lng], 13); },
+      () => { toast('現在地を取得できませんでした'); filter = 'all'; render(); },
+      { enableHighAccuracy: false, timeout: 10000 });
+  }
+  render();
+};
+$('#search').oninput = e => { query = e.target.value; render(); };
+$('#btnSettings').onclick = openSettings;
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const { act, id } = b.dataset;
+  if (act === 'edit') openEdit(id);
+  if (act === 'done') openDone(id);
+  if (act === 'locate') { pendingFocus = id; view = 'map'; render(); }
+});
+
+// 他の端末やLINEからの追加を拾うため、画面に戻ってきたら再読み込み
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && remote()) load(); });
+
+load();
+</script>
+</body>
+</html>
