@@ -11,6 +11,8 @@
  *   LINE_WEBHOOK_KEY   LINEのWebhook URL に付ける合言葉（?src=line&key=...）
  *   LINE_ACCESS_TOKEN  LINE チャネルアクセストークン（長期）
  *   APP_URL            Webページの URL（LINEの返信に載せる。任意）
+ *   ANTHROPIC_API_KEY  Claude の API キー（任意。入れるとAIでまとめて追加・整理ができる）
+ *   CLAUDE_MODEL       使うモデル（任意。省略時 claude-opus-5-5）
  *
  * セットアップ手順は places/README.md を参照。
  */
@@ -18,12 +20,24 @@
 const SHEET_NAME = 'places';
 const HEADERS = [
   'id', 'title', 'size', 'area', 'url', 'lat', 'lng', 'memo',
-  'addedBy', 'source', 'createdAt', 'status', 'visitedAt', 'visitedMemo',
+  'addedBy', 'source', 'createdAt', 'status', 'visitedAt', 'visitedMemo', 'genre',
 ];
 const SIZES = {
   trip: { label: '旅行', emoji: '🧳' },
   outing: { label: 'おでかけ', emoji: '🚗' },
   date: { label: 'デート', emoji: '☕' },
+};
+const GENRES = {
+  cafe: { label: 'カフェ・スイーツ', emoji: '🍰' },
+  food: { label: 'ごはん', emoji: '🍽' },
+  bar: { label: 'お酒・バー', emoji: '🍷' },
+  sight: { label: '観光・街歩き', emoji: '🏯' },
+  nature: { label: '自然・景色', emoji: '🌿' },
+  play: { label: '遊び・体験', emoji: '🎡' },
+  stay: { label: '温泉・宿', emoji: '♨️' },
+  shop: { label: '買い物', emoji: '🛍' },
+  event: { label: 'イベント', emoji: '🎆' },
+  other: { label: 'その他', emoji: '📍' },
 };
 
 /* ───────────────────────── HTTP entry points ───────────────────────── */
@@ -56,9 +70,12 @@ function doPost(e) {
   try {
     switch (req.action) {
       case 'add': return json_({ ok: true, item: addItem_(req.item || {}) });
+      case 'addText': return json_({ ok: true, items: addFromText_(req.text || '', req.base || {}) });
+      case 'summary': return json_({ ok: true, text: aiSummary_(req.q || '') });
       case 'update': return json_({ ok: true, item: updateItem_(req.id, req.patch || {}) });
       case 'delete': deleteItem_(req.id); return json_({ ok: true });
       case 'geocode': return json_({ ok: true, result: geocode_(req.q || '') });
+      case 'config': return json_({ ok: true, ai: !!prop_('ANTHROPIC_API_KEY') });
       default: return json_({ ok: false, error: 'unknown action' });
     }
   } catch (err) {
@@ -68,7 +85,9 @@ function doPost(e) {
 
 /* ───────────────────────── Sheet storage ───────────────────────── */
 
+let sheetCache_ = null;
 function sheet_() {
+  if (sheetCache_) return sheetCache_;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) {
@@ -77,8 +96,15 @@ function sheet_() {
     sh.setFrozenRows(1);
     // 日付やIDが勝手に変換されないように全部テキスト扱い（lat/lng だけ数値）
     sh.getRange('A:E').setNumberFormat('@');
-    sh.getRange('H:N').setNumberFormat('@');
+    sh.getRange('H:O').setNumberFormat('@');
   }
+  // 古いシートに後から増えた列（genre など）の見出しを足す
+  const width = sh.getLastColumn();
+  if (width < HEADERS.length) {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+    sh.getRange(1, width + 1, sh.getMaxRows(), HEADERS.length - width).setNumberFormat('@');
+  }
+  sheetCache_ = sh;
   return sh;
 }
 
@@ -114,9 +140,10 @@ function findRow_(id) {
 
 function addItem_(input) {
   const item = normalize_(input);
-  enrich_(item);
+  enrich_(item, input.geoQuery);
   if (!item.title) item.title = item.url || '（名前なし）';
-  if (!item.size) item.size = guessSize_(item.title + ' ' + (item.memo || ''));
+  if (!item.genre) item.genre = guessGenre_(item.title + ' ' + (item.memo || ''));
+  if (!item.size) item.size = item.genre === 'stay' ? 'trip' : guessSize_(item.title + ' ' + (item.memo || ''));
   return withLock_(function () {
     sheet_().appendRow(rowOf_(item));
     return item;
@@ -168,13 +195,14 @@ function normalize_(input) {
     status: 'want',
     visitedAt: '',
     visitedMemo: '',
+    genre: GENRES[input.genre] ? input.genre : '',
   };
 }
 
 /* ───────────────────────── Enrichment ───────────────────────── */
 
 /** URL からタイトル・座標を補完し、それでも座標がなければ名前でジオコーディング */
-function enrich_(item) {
+function enrich_(item, geoQuery) {
   try {
     if (item.url && isMapsUrl_(item.url)) {
       const m = parseGoogleMaps_(item.url);
@@ -188,8 +216,9 @@ function enrich_(item) {
   } catch (err) { console.warn('url enrich failed', err); }
 
   try {
-    if (item.lat == null && item.title) {
-      const g = geocode_(item.title + (item.area ? ' ' + item.area : ''));
+    // geoQuery === '' は「AIが場所を特定できないと判断した」なので、無理にピンを立てない
+    if (item.lat == null && item.title && geoQuery !== '') {
+      const g = geocode_(geoQuery || (item.title + (item.area ? ' ' + item.area : '')));
       if (g) { item.lat = g.lat; item.lng = g.lng; if (!item.area) item.area = g.area; }
     } else if (item.lat != null && !item.area) {
       item.area = reverseArea_(item.lat, item.lng);
@@ -283,6 +312,156 @@ function guessSize_(text) {
   return 'date';
 }
 
+/** ジャンルの自動判定（AIがないとき用。Web側 guessGenre と同じルール） */
+function guessGenre_(text) {
+  const t = String(text || '');
+  const rules = [
+    ['stay', /旅館|ホテル|民宿|お宿|の宿|宿$|温泉|グランピング|コテージ|ヴィラ|リゾート/],
+    ['cafe', /カフェ|喫茶|cafe|coffee|珈琲|コーヒー|スイーツ|ケーキ|パフェ|パン|ベーカリー|ドーナツ|かき氷|ジェラート|プリン/i],
+    ['bar', /バー|bar|居酒屋|酒場|ワイン|ビール|日本酒|ブルワリー|立ち飲み/i],
+    ['food', /ランチ|ディナー|レストラン|ご飯|ごはん|寿司|鮨|焼肉|ラーメン|ビストロ|食堂|そば|うどん|カレー|ピザ|定食|イタリアン|フレンチ|中華|焼き鳥|焼鳥|天ぷら|もんじゃ|お好み焼/],
+    ['event', /花火|祭|フェス|ライブ|イルミネーション|展示会|マルシェ|コンサート/],
+    ['play', /水族館|動物園|遊園地|テーマパーク|美術館|博物館|映画|ボウリング|体験|ワークショップ|プラネタリウム|サウナ|謎解き/],
+    ['nature', /公園|海岸|海辺|ビーチ|滝|湖|紅葉|花見|桜|植物園|牧場|キャンプ|ハイキング|登山|絶景|展望|高原|渓谷/],
+    ['shop', /アウトレット|ショッピング|雑貨|古着|市場|商店街|モール|蚤の市/],
+    ['sight', /城|寺|神社|街歩き|散歩|観光|横丁|古い町並み/],
+  ];
+  for (let i = 0; i < rules.length; i++) if (rules[i][1].test(t)) return rules[i][0];
+  return 'other';
+}
+
+/* ───────────────────────── AI (Claude) ───────────────────────── */
+
+const PLACE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['places'],
+  properties: {
+    places: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'size', 'genre', 'area', 'memo', 'search_query'],
+        properties: {
+          title: { type: 'string' },
+          size: { type: 'string', enum: Object.keys(SIZES) },
+          genre: { type: 'string', enum: Object.keys(GENRES) },
+          area: { type: 'string' },
+          memo: { type: 'string' },
+          search_query: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
+const EXTRACT_SYSTEM = [
+  'あなたはカップルの「行きたい場所メモ」を整理するアシスタントです。',
+  'メモ（箇条書き、思いつきの文章、LINEのやりとりの貼り付けなど）から、行きたい場所・やりたいおでかけを1件ずつ取り出してください。',
+  '- title: 店名・施設名・地名など短い名前。正式名称が分かるなら正式名称。「海の見えるカフェ」のように特定できないものはそのまま短く。',
+  '- size: trip=泊まりがけの旅行 / outing=日帰りのおでかけ / date=近場のカフェ・ごはん・ちょっとしたデート',
+  '- genre: cafe=カフェ・スイーツ / food=ごはん / bar=お酒・バー / sight=観光・街歩き / nature=自然・景色 / play=遊び・体験（水族館・美術館・遊園地など） / stay=温泉・宿 / shop=買い物 / event=イベント（祭り・花火・ライブなど） / other=その他',
+  '- area: 都道府県＋市区町村など分かる範囲。分からなければ空文字。',
+  '- memo: 時期・理由・食べたいものなどの補足。なければ空文字。',
+  '- search_query: 地図で検索するための文字列（例「ブルーボトルコーヒー 清澄白河」）。場所が特定できないときは空文字。',
+  '行き先と関係ない雑談は無視してください。同じ場所は1件にまとめてください。行き先がなければ places は空配列にしてください。',
+].join('\n');
+
+function hasAI_() { return !!prop_('ANTHROPIC_API_KEY'); }
+
+function claude_(body) {
+  const model = prop_('CLAUDE_MODEL') || 'claude-opus-5-5';
+  const payload = Object.assign({ model: model, max_tokens: 8000 }, body);
+  const headers = { 'x-api-key': prop_('ANTHROPIC_API_KEY'), 'anthropic-version': '2026-10-21' };
+  // AIが安全上の理由で断ったとき、別のモデルで自動的にやり直す（Haiku は非対応）
+  if (!/haiku/.test(model)) {
+    payload.fallbacks = 'default';
+    headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+  }
+  const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post', contentType: 'application/json', headers: headers,
+    payload: JSON.stringify(payload), muteHttpExceptions: true,
+  });
+  const code = res.getResponseCode();
+  if (code !== 200) throw new Error('Claude API ' + code + ': ' + res.getContentText().slice(0, 300));
+  const j = JSON.parse(res.getContentText());
+  if (j.stop_reason === 'refusal') throw new Error('Claude refused');
+  return (j.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
+}
+
+function aiExtract_(text, hint) {
+  const user = (hint ? '参考（リンク先のページタイトル）: ' + hint + '\n\n' : '') + 'メモ:\n' + text;
+  const out = claude_({
+    system: EXTRACT_SYSTEM,
+    messages: [{ role: 'user', content: user }],
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: PLACE_SCHEMA } },
+  });
+  return (JSON.parse(out).places || []).filter(function (p) { return p.title; });
+}
+
+/**
+ * 自由なテキストから追加する（LINE・Web共通）。
+ * AIキーがあれば複数件に分けて整理、なければ1件として追加。
+ */
+function addFromText_(text, base) {
+  base = base || {};
+  const parsed = parseText_(text);
+  const size = SIZES[base.size] ? base.size : parsed.size;
+  let body = (parsed.title + '\n' + parsed.memo).trim();
+  let hint = '';
+
+  let places = null;
+  if (hasAI_() && (body || parsed.url)) {
+    try {
+      if (parsed.url) {
+        hint = isMapsUrl_(parsed.url) ? (parseGoogleMaps_(parsed.url).name || '') : fetchTitle_(parsed.url);
+        if (!body) body = hint || parsed.url;
+      }
+      places = aiExtract_(body, hint);
+    } catch (err) { console.warn('AI extract failed, fallback', err); }
+  }
+  if (places) {
+    // AIが「行き先なし」と判断したら（雑談など）何も追加しない
+    return places.slice(0, 20).map(function (p) {
+      return addItem_(Object.assign({}, base, {
+        title: p.title, size: size || p.size, genre: p.genre, area: p.area, memo: p.memo,
+        url: places.length === 1 ? parsed.url : '', geoQuery: p.search_query,
+      }));
+    });
+  }
+  if (!parsed.title && !parsed.url) return [];
+  return [addItem_(Object.assign({}, base, parsed, { size: size }))];
+}
+
+function aiSummary_(cond) {
+  const items = readAll_().filter(function (i) { return i.status !== 'done'; });
+  if (!items.length) return 'まだ行きたいところが登録されていないよ。';
+  if (!hasAI_()) return listText_();
+  const lines = items.map(function (i) {
+    return '- ' + i.title + ' / ' + (SIZES[i.size] || SIZES.date).label + ' / ' + (GENRES[i.genre] || GENRES.other).label
+      + (i.area ? ' / ' + i.area : '') + (i.memo ? ' / メモ: ' + String(i.memo).replace(/\n/g, ' ') : '');
+  });
+  const done = readAll_().filter(function (i) { return i.status === 'done'; }).slice(-10)
+    .map(function (i) { return '- ' + i.title + (i.visitedMemo ? '（' + i.visitedMemo + '）' : ''); });
+  const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy年M月d日');
+  const prompt = [
+    '今日は' + today + '。カップルの「行きたいところ」リストを整理してください。',
+    cond ? '今回の希望・条件: ' + cond : '',
+    '',
+    '出力のルール:',
+    '- LINEで読むので、マークダウン（#や**）は使わず、絵文字と改行で読みやすく。全体で40行以内。',
+    '- まずジャンル別にまとめる（近いエリアのものは「〇〇エリア」として寄せる）。',
+    '- 最後に「次に行くなら」を2〜3件、理由（季節・エリアの組み合わせ・条件に合うなど）つきで提案。',
+    '- リストにない場所を新しく勧めない。',
+    '',
+    '行きたいところ:',
+    lines.join('\n'),
+    done.length ? '\n最近行ったところ（参考）:\n' + done.join('\n') : '',
+  ].join('\n');
+  return claude_({ messages: [{ role: 'user', content: prompt }], output_config: { effort: 'low' } }).trim();
+}
+
 /* ───────────────────────── LINE ───────────────────────── */
 
 const ADD_TRIGGER = /^(?:#?行きたい|#?いきたい|[+＋]|📌)[!！\s:：、]*/;
@@ -320,6 +499,13 @@ function handleLineEvent_(ev) {
 
   if (/^(リスト|一覧|list)$/i.test(text)) { reply_(ev.replyToken, listText_()); return; }
   if (/^(ヘルプ|help|使い方)$/i.test(text)) { reply_(ev.replyToken, helpText_()); return; }
+  const sum = text.match(/^(?:まとめて|まとめ|整理して|AIまとめ)(?:[\s:：、]+([\s\S]*))?$/);
+  if (sum) {
+    let out;
+    try { out = aiSummary_((sum[1] || '').trim()); } catch (err) { console.error(err); out = listText_(); }
+    reply_(ev.replyToken, out);
+    return;
+  }
 
   const done = text.match(/^(?:行った|いった|行ってきた)[!！\s:：、]+(.+)$/);
   if (done) { reply_(ev.replyToken, markDoneText_(done[1].trim())); return; }
@@ -329,15 +515,18 @@ function handleLineEvent_(ev) {
   // グループでは普段の会話を拾わないよう、合図があるときだけ追加
   if (isGroup && !triggered && !hasMapsUrl) return;
 
-  text = text.replace(ADD_TRIGGER, '');
-  const parsed = parseText_(text);
-  if (!parsed.title && !parsed.url) {
+  text = text.replace(ADD_TRIGGER, '').trim();
+  if (!text) {
     reply_(ev.replyToken, '何を追加する？\n例）行きたい カフェ 〇〇珈琲');
     return;
   }
-  parsed.addedBy = displayName_(ev.source);
-  parsed.source = 'line';
-  reply_(ev.replyToken, addedText_(addItem_(parsed)));
+  const added = addFromText_(text, { addedBy: displayName_(ev.source), source: 'line' });
+  if (!added.length) {
+    // 1対1トークで行き先が見つからなかったとき（雑談など）は静かにしておく
+    if (triggered) reply_(ev.replyToken, '行き先が見つからなかった…\n例）行きたい カフェ 〇〇珈琲');
+    return;
+  }
+  reply_(ev.replyToken, addedText_(added));
 }
 
 function parseText_(text) {
@@ -353,13 +542,16 @@ function parseText_(text) {
   return out;
 }
 
-function addedText_(item) {
-  const s = SIZES[item.size] || SIZES.date;
-  const lines = [
-    '📌 追加したよ',
-    s.emoji + ' ' + item.title + (item.area ? '（' + item.area + '）' : ''),
-    item.lat != null ? '🗺 地図にのせました' : '🗺 場所が分からなかったので、あとでWebで指定してね',
-  ];
+function addedText_(items) {
+  if (!Array.isArray(items)) items = [items];
+  const lines = [items.length > 1 ? '📌 ' + items.length + '件追加したよ' : '📌 追加したよ'];
+  items.forEach(function (item) {
+    const s = SIZES[item.size] || SIZES.date;
+    const g = GENRES[item.genre] || GENRES.other;
+    lines.push(s.emoji + ' ' + item.title + (item.area ? '（' + item.area + '）' : '') + ' ' + g.emoji + g.label);
+  });
+  const noPin = items.filter(function (i) { return i.lat == null; }).length;
+  lines.push(noPin ? '🗺 ' + noPin + '件は場所が分からなかったので、あとでWebで指定してね' : '🗺 地図にのせました');
   const app = prop_('APP_URL');
   if (app) lines.push('', app);
   return lines.join('\n');
@@ -375,7 +567,9 @@ function listText_() {
       .sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
     if (!list.length) return;
     lines.push('', SIZES[sz].emoji + ' ' + SIZES[sz].label);
-    list.slice(0, 5).forEach(function (i) { lines.push('・' + i.title + (i.area ? '（' + i.area + '）' : '')); });
+    list.slice(0, 5).forEach(function (i) {
+      lines.push('・' + (GENRES[i.genre] || GENRES.other).emoji + i.title + (i.area ? '（' + i.area + '）' : ''));
+    });
     if (list.length > 5) lines.push('　ほか' + (list.length - 5) + '件');
   });
   const app = prop_('APP_URL');
@@ -406,8 +600,10 @@ function helpText_() {
     '',
     '【その他】',
     'リスト … 一覧を見る',
+    'まとめて … AIがジャンル別に整理して、次に行く候補を提案',
+    'まとめて 雨の日 … 条件つきでもOK',
     '行った 〇〇 … 行ったリストへ',
-  ].join('\n') + (prop_('APP_URL') ? '\n\n' + prop_('APP_URL') : '');
+  ].concat(hasAI_() ? ['', '💡 いくつかまとめて書いたり、トークを貼り付けてもAIが1件ずつ分けてくれます'] : []).join('\n') + (prop_('APP_URL') ? '\n\n' + prop_('APP_URL') : '');
 }
 
 function displayName_(source) {
@@ -456,6 +652,19 @@ function json_(obj) {
 }
 
 function text_(s) { return ContentService.createTextOutput(s); }
+
+/** エディタから実行: ジャンルが空の行をAI（なければキーワード）で埋める */
+function fillGenres() {
+  const items = readAll_().filter(function (i) { return !i.genre; });
+  items.forEach(function (i) {
+    let genre = '';
+    if (hasAI_()) {
+      try { const p = aiExtract_(i.title + (i.memo ? '\n' + i.memo : ''), ''); genre = p[0] && p[0].genre; } catch (_) {}
+    }
+    updateItem_(i.id, { genre: genre || guessGenre_(i.title + ' ' + i.memo) });
+  });
+  console.log(items.length + '件のジャンルを埋めました');
+}
 
 /** エディタから一度だけ実行: シート作成と権限の承認 */
 function setup() {

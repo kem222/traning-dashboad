@@ -109,6 +109,18 @@
     border-radius: 12px; padding: 9px 12px; font-size: 15px; outline: none;
   }
 
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+  .seg button { font-size: 12px; padding: 5px 10px; border-radius: 8px; color: var(--muted); font-weight: 700; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .ai-btn {
+    margin-left: auto; font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 10px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--trip) 18%, var(--surface)), color-mix(in srgb, var(--date) 18%, var(--surface)));
+    border: 1px solid var(--border);
+  }
+  .genre-tag { color: var(--text); }
+  .ai-out { white-space: pre-wrap; font-size: 14px; line-height: 1.7; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-top: 10px; }
+
   /* list */
   .group { margin-top: 22px; }
   .group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
@@ -203,7 +215,7 @@
 
   <form class="add-card" id="addForm" autocomplete="off">
     <div class="add-row">
-      <textarea id="addText" rows="1" placeholder="どこ行きたい？（店名・URLでもOK）"></textarea>
+      <textarea id="addText" rows="1" placeholder="どこ行きたい？（URLもOK）"></textarea>
       <button class="btn-primary" id="addBtn" type="submit">追加</button>
     </div>
     <div class="size-pick" id="addSize">
@@ -212,7 +224,7 @@
       <button type="button" class="chip" data-size="outing" aria-pressed="false">🚗 おでかけ</button>
       <button type="button" class="chip" data-size="date" aria-pressed="false">☕ デート</button>
     </div>
-    <div class="add-hint">2行目以降はメモになります。場所は名前から自動で地図にのせます。</div>
+    <div class="add-hint" id="addHint">2行目以降はメモになります。場所は名前から自動で地図にのせます。</div>
   </form>
 
   <nav class="tabs" role="tablist">
@@ -229,6 +241,13 @@
     <button class="chip" data-f="near" aria-pressed="false">📍 近い順</button>
   </div>
   <input class="search" id="search" type="search" placeholder="検索（名前・エリア・メモ）">
+  <div class="toolbar" id="toolbar">
+    <div class="seg" id="groupSeg" role="group" aria-label="並べ方">
+      <button data-g="size" aria-pressed="true">大きさ別</button>
+      <button data-g="genre" aria-pressed="false">ジャンル別</button>
+    </div>
+    <button class="ai-btn" id="btnAI" hidden>✨ AIでまとめる</button>
+  </div>
 
   <main id="view"><div class="loading">読み込み中…</div></main>
   <div id="mapWrap" hidden>
@@ -250,7 +269,20 @@ const SIZES = {
   date:   { label: 'デート',   sub: 'カフェ・ごはん',   emoji: '☕', color: 'var(--date)',   hex: '#E06C5A' },
 };
 const ORDER = ['trip', 'outing', 'date'];
-const LS = { cfg: 'places.cfg', items: 'places.items', view: 'places.view' };
+const GENRES = {
+  cafe:   { label: 'カフェ・スイーツ', emoji: '🍰' },
+  food:   { label: 'ごはん',           emoji: '🍽' },
+  bar:    { label: 'お酒・バー',       emoji: '🍷' },
+  sight:  { label: '観光・街歩き',     emoji: '🏯' },
+  nature: { label: '自然・景色',       emoji: '🌿' },
+  play:   { label: '遊び・体験',       emoji: '🎡' },
+  stay:   { label: '温泉・宿',         emoji: '♨️' },
+  shop:   { label: '買い物',           emoji: '🛍' },
+  event:  { label: 'イベント',         emoji: '🎆' },
+  other:  { label: 'その他',           emoji: '📍' },
+};
+const GENRE_ORDER = Object.keys(GENRES);
+const LS = { cfg: 'places.cfg', items: 'places.items', view: 'places.view', group: 'places.group' };
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -291,6 +323,24 @@ function guessSize(text) {
   if (/水族館|動物園|遊園地|テーマパーク|美術館|博物館|公園|ドライブ|展望|花火|祭|紅葉|花見|ライブ|フェス|植物園|牧場|アウトレット|海水浴|ビーチ|登山|ハイキング|滝|展示|イルミネーション/.test(t)) return 'outing';
   return 'date';
 }
+
+function guessGenre(text) {
+  const t = String(text || '');
+  const rules = [
+    ['stay', /旅館|ホテル|民宿|お宿|の宿|宿$|温泉|グランピング|コテージ|ヴィラ|リゾート/],
+    ['cafe', /カフェ|喫茶|cafe|coffee|珈琲|コーヒー|スイーツ|ケーキ|パフェ|パン|ベーカリー|ドーナツ|かき氷|ジェラート|プリン/i],
+    ['bar', /バー|bar|居酒屋|酒場|ワイン|ビール|日本酒|ブルワリー|立ち飲み/i],
+    ['food', /ランチ|ディナー|レストラン|ご飯|ごはん|寿司|鮨|焼肉|ラーメン|ビストロ|食堂|そば|うどん|カレー|ピザ|定食|イタリアン|フレンチ|中華|焼き鳥|焼鳥|天ぷら|もんじゃ|お好み焼/],
+    ['event', /花火|祭|フェス|ライブ|イルミネーション|展示会|マルシェ|コンサート/],
+    ['play', /水族館|動物園|遊園地|テーマパーク|美術館|博物館|映画|ボウリング|体験|ワークショップ|プラネタリウム|サウナ|謎解き/],
+    ['nature', /公園|海岸|海辺|ビーチ|滝|湖|紅葉|花見|桜|植物園|牧場|キャンプ|ハイキング|登山|絶景|展望|高原|渓谷/],
+    ['shop', /アウトレット|ショッピング|雑貨|古着|市場|商店街|モール|蚤の市/],
+    ['sight', /城|寺|神社|街歩き|散歩|観光|横丁|古い町並み/],
+  ];
+  for (const [g, re] of rules) if (re.test(t)) return g;
+  return 'other';
+}
+const genreOf = i => GENRES[i.genre] ? i.genre : guessGenre(`${i.title} ${i.memo || ''}`);
 
 function parseInput(text) {
   const out = { title: '', url: '', memo: '' };
@@ -350,7 +400,8 @@ const api = {
     };
     if (it.url && /google\.[^/]+\/maps/.test(it.url)) Object.assign(it, { ...parseMapsUrlLocal(it.url), ...(it.title ? { title: it.title } : {}) });
     if (!it.title) it.title = it.url || '（名前なし）';
-    if (!it.size) it.size = guessSize(`${it.title} ${it.memo}`);
+    if (!it.genre) it.genre = guessGenre(`${it.title} ${it.memo}`);
+    if (!it.size) it.size = it.genre === 'stay' ? 'trip' : guessSize(`${it.title} ${it.memo}`);
     if (!hasPin(it)) { const g = await nominatim(it.title); if (g) Object.assign(it, { lat: g.lat, lng: g.lng, area: it.area || g.area }); }
     const all = store.get(LS.items, []); all.push(it); store.set(LS.items, all);
     return it;
@@ -364,6 +415,12 @@ const api = {
     if (remote()) return api.call({ action: 'delete', id });
     store.set(LS.items, store.get(LS.items, []).filter(x => x.id !== id));
   },
+  async addText(text, base) {
+    if (remote()) return (await api.call({ action: 'addText', text, base })).items;
+    return [await api.add({ ...parseInput(text), ...base })];
+  },
+  async summary(q) { return (await api.call({ action: 'summary', q })).text; },
+  async config() { return remote() ? api.call({ action: 'config' }) : { ai: false }; },
   async geocode(q) {
     if (remote()) return (await api.call({ action: 'geocode', q })).result;
     return nominatim(q);
@@ -373,6 +430,9 @@ const api = {
 /* ═════════════ state & render ═════════════ */
 let items = [];
 let view = store.get(LS.view, 'list');
+let groupBy = store.get(LS.group, 'size');
+let aiEnabled = false;
+let loaded = false;
 let filter = 'all';
 let query = '';
 let here = null;
@@ -394,7 +454,9 @@ function filtered(status) {
 function cardHTML(i) {
   const s = SIZES[i.size] || SIZES.date;
   const done = i.status === 'done';
+  const g = GENRES[genreOf(i)];
   const meta = [
+    `<span class="genre-tag">${g.emoji} ${esc(g.label)}</span>`,
     i.area ? `📍${esc(i.area)}` : '',
     !hasPin(i) ? `<span class="nopin">地図未設定</span>` : '',
     here && hasPin(i) ? `${distKm(here, i).toFixed(distKm(here, i) < 10 ? 1 : 0)}km` : '',
@@ -423,6 +485,12 @@ function render() {
   $('#nDone').textContent = items.filter(i => i.status === 'done').length || '';
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.view === view)));
   document.querySelectorAll('#filters .chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.f === filter)));
+  document.querySelectorAll('#groupSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === groupBy)));
+  $('#groupSeg').hidden = view !== 'list';
+  $('#btnAI').hidden = !aiEnabled;
+  $('#addHint').textContent = aiEnabled
+    ? 'いくつかまとめて書いても、LINEのトークを貼ってもOK。AIが1件ずつ分けてジャンル分けします。'
+    : '2行目以降はメモになります。場所は名前から自動で地図にのせます。';
   $('#subtitle').innerHTML = remote() ? 'ふたりで共有中' : '<span class="mode-badge">この端末だけに保存中 · ⚙︎ から共有設定</span>';
 
   const isMap = view === 'map';
@@ -450,6 +518,15 @@ function render() {
     return;
   }
   list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  if (groupBy === 'genre') {
+    el.innerHTML = GENRE_ORDER.map(gk => {
+      const g = list.filter(i => genreOf(i) === gk);
+      if (!g.length) return '';
+      const G = GENRES[gk];
+      return `<section class="group"><div class="group-head"><span class="t">${G.emoji} ${G.label}</span><span class="c">${g.length}件</span></div>${g.map(cardHTML).join('')}</section>`;
+    }).join('');
+    return;
+  }
   el.innerHTML = ORDER.map(sz => {
     const g = list.filter(i => (i.size || 'date') === sz);
     if (!g.length) return '';
@@ -519,6 +596,9 @@ function openEdit(id) {
     <div class="field"><label>大きさ</label><div class="size-pick" id="eSize">
       ${ORDER.map(k => `<button type="button" class="chip" data-size="${k}" aria-pressed="${(i.size || 'date') === k}">${SIZES[k].emoji} ${SIZES[k].label}</button>`).join('')}
     </div></div>
+    <div class="field"><label>ジャンル</label><div class="size-pick" id="eGenre">
+      ${GENRE_ORDER.map(k => `<button type="button" class="chip" data-genre="${k}" aria-pressed="${genreOf(i) === k}">${GENRES[k].emoji} ${GENRES[k].label}</button>`).join('')}
+    </div></div>
     <div class="row2">
       <div class="field"><label>エリア</label><input id="eArea" value="${esc(i.area)}" placeholder="例）神奈川県箱根町"></div>
     </div>
@@ -538,6 +618,11 @@ function openEdit(id) {
 
   let pos = hasPin(i) ? { lat: +i.lat, lng: +i.lng } : null;
   let size = i.size || 'date';
+  let genre = genreOf(i);
+  $('#eGenre').onclick = e => {
+    const b = e.target.closest('.chip'); if (!b) return; genre = b.dataset.genre;
+    $('#eGenre').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+  };
   $('#eSize').onclick = e => {
     const b = e.target.closest('.chip'); if (!b) return; size = b.dataset.size;
     $('#eSize').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
@@ -567,7 +652,7 @@ function openEdit(id) {
 
   $('#eSave').onclick = async () => {
     const patch = {
-      title: $('#eTitle').value.trim() || i.title, size, area: $('#eArea').value.trim(),
+      title: $('#eTitle').value.trim() || i.title, size, genre, area: $('#eArea').value.trim(),
       url: $('#eUrl').value.trim(), memo: $('#eMemo').value.trim(),
       lat: pos ? pos.lat : '', lng: pos ? pos.lng : '',
     };
@@ -642,6 +727,7 @@ async function load() {
     $('#view').innerHTML = `<div class="empty"><b>⚠️</b>読み込めませんでした。<br>⚙︎ の API URL と合言葉を確認してね。</div>`;
     return;
   }
+  loaded = true;
   render();
 }
 
@@ -658,18 +744,18 @@ ta.addEventListener('keydown', e => {
 $('#addForm').onsubmit = async e => {
   e.preventDefault();
   const text = ta.value.trim(); if (!text) return;
-  const p = parseInput(text);
-  const btn = $('#addBtn'); btn.disabled = true; btn.textContent = '…';
+  const btn = $('#addBtn'); btn.disabled = true; btn.textContent = aiEnabled ? 'AI整理中…' : '…';
   try {
-    const it = await api.add({ ...p, size: addSize, addedBy: cfg.name || '' });
-    items.push(it);
+    const added = await api.addText(text, { size: addSize, addedBy: cfg.name || '' });
+    if (!added.length) { toast('行き先が見つからなかった…'); return; }
+    items.push(...added);
     ta.value = ''; ta.style.height = '40px';
     if (view === 'done') view = 'list';
     render();
-    const s = SIZES[it.size] || SIZES.date;
-    toast(`${s.emoji} ${it.title} を追加` + (hasPin(it) ? '' : '（地図は未設定）'));
+    const it = added[0], s = SIZES[it.size] || SIZES.date;
+    toast(added.length > 1 ? `${added.length}件追加しました` : `${s.emoji} ${it.title} を追加` + (hasPin(it) ? '' : '（地図は未設定）'));
   } catch (err) { toast('追加に失敗しました'); console.error(err); }
-  btn.disabled = false; btn.textContent = '追加';
+  finally { btn.disabled = false; btn.textContent = '追加'; }
 };
 
 document.querySelector('.tabs').onclick = e => {
@@ -691,6 +777,24 @@ $('#filters').onclick = e => {
 };
 $('#search').oninput = e => { query = e.target.value; render(); };
 $('#btnSettings').onclick = openSettings;
+$('#groupSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  groupBy = b.dataset.g; store.set(LS.group, groupBy); render();
+};
+$('#btnAI').onclick = () => {
+  openSheet(`<h2>✨ AIでまとめる</h2>
+    <div class="field"><label>条件（任意）</label><input id="aiQ" placeholder="例）今月の週末 / 雨の日 / 予算ひかえめ"></div>
+    <div class="sheet-actions"><button class="btn" id="aiClose">閉じる</button><button class="btn primary" id="aiGo">まとめる</button></div>
+    <div id="aiOut"></div>`);
+  $('#aiClose').onclick = closeSheet;
+  $('#aiGo').onclick = async () => {
+    const out = $('#aiOut'); const go = $('#aiGo');
+    go.disabled = true; out.innerHTML = '<div class="loading">AIが整理中…（10秒くらい）</div>';
+    try { out.innerHTML = `<div class="ai-out">${esc(await api.summary($('#aiQ').value.trim()))}</div>`; }
+    catch (e) { out.innerHTML = '<div class="loading">うまくいきませんでした。少しして再度お試しください。</div>'; }
+    go.disabled = false;
+  };
+};
 
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
@@ -704,6 +808,7 @@ document.addEventListener('click', e => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && remote()) load(); });
 
 load();
+api.config().then(c => { aiEnabled = !!(c && c.ai); if (loaded) render(); }).catch(() => {});
 </script>
 </body>
 </html>
